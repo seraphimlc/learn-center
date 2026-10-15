@@ -1,0 +1,150 @@
+server:
+  port: ${SERVER_PORT:8080}
+  address: ${SERVER_ADDRESS:0.0.0.0}
+  servlet:
+    context-path: /
+  tomcat:
+    threads:
+      max: ${TOMCAT_MAX_THREADS:400}
+      min-spare: ${TOMCAT_MIN_SPARE:50}
+    accept-count: ${TOMCAT_ACCEPT_COUNT:200}
+    max-connections: ${TOMCAT_MAX_CONNECTIONS:10000}
+    connection-timeout: 20s
+
+spring:
+  application:
+    name: video-learning-platform
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/video_learning?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false}
+    username: ${SPRING_DATASOURCE_USERNAME:vlp}
+    password: ${SPRING_DATASOURCE_PASSWORD:vlp123}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      pool-name: vlp-hikari
+      maximum-pool-size: ${HIKARI_MAX_POOL:50}
+      minimum-idle: ${HIKARI_MIN_IDLE:10}
+      connection-timeout: 5000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      leak-detection-threshold: 60000
+  # Optional read replica (phase 2+). When set, bean ReadOnlyDataSource can be wired.
+  datasource-readonly:
+    enabled: ${DB_READONLY_ENABLED:false}
+    url: ${SPRING_DATASOURCE_READONLY_URL:}
+    username: ${SPRING_DATASOURCE_READONLY_USERNAME:}
+    password: ${SPRING_DATASOURCE_READONLY_PASSWORD:}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+        jdbc:
+          time_zone: Asia/Shanghai
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+      timeout: 3000ms
+      lettuce:
+        pool:
+          max-active: ${REDIS_POOL_MAX:64}
+          max-idle: 16
+          min-idle: 4
+          max-wait: 2000ms
+  servlet:
+    multipart:
+      max-file-size: 512MB
+      max-request-size: 520MB
+  jackson:
+    time-zone: Asia/Shanghai
+    serialization:
+      write-dates-as-timestamps: false
+  cache:
+    type: redis
+    redis:
+      time-to-live: 60s
+      cache-null-values: false
+      key-prefix: "vlp:cache:"
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when_authorized
+
+vlp:
+  jwt:
+    secret: ${JWT_SECRET:VlpPhase1JwtSecretKeyMustBeLongEnoughForHs256Algorithm2026!!}
+    expire-hours: 72
+
+  wechat:
+    # 微信开放平台「网站应用」扫码登录；未配置时接口返回 503「未配置微信登录」
+    enabled: ${WECHAT_ENABLED:false}
+    app-id: ${WECHAT_APP_ID:}
+    app-secret: ${WECHAT_APP_SECRET:}
+    redirect-uri: ${WECHAT_REDIRECT_URI:}
+    # 可选：公众号网页授权 hook（H5）
+    mp-app-id: ${WECHAT_MP_APP_ID:}
+    mp-app-secret: ${WECHAT_MP_APP_SECRET:}
+  upload:
+    dir: ${UPLOAD_DIR:../uploads}
+    max-video-mb: 500
+    allowed-video: mp4,webm,mov,m4v
+    allowed-image: jpg,jpeg,png,gif,webp
+  cors:
+    origins: ${VLP_CORS_ORIGINS:http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174,https://learn.visitworld.me}
+  oss:
+    enabled: ${OSS_ENABLED:false}
+    endpoint: ${OSS_ENDPOINT:}
+    bucket: ${OSS_BUCKET:}
+    access-key: ${OSS_ACCESS_KEY:}
+    secret-key: ${OSS_SECRET_KEY:}
+  cdn:
+    enabled: ${CDN_ENABLED:false}
+    domain: ${CDN_DOMAIN:}
+  llm:
+    base-url: ${LLM_BASE_URL:https://api.xytoken.xyb2b.com/v1}
+    api-key: ${LLM_API_KEY:}
+    model: ${LLM_MODEL:Aerith-sonnet-5.5}
+    timeout-seconds: 60
+  learn:
+    completion-ratio: 0.9
+    # Player heartbeat ~3s (≈20 reports/min per watching user); still report on pause/ended/unmount
+    heartbeat-interval-seconds: 3
+    progress-max-jump-seconds: 120
+    # progress write path: redis buffer + batch flush (high QPS heartbeats)
+    progress-async-enabled: ${PROGRESS_ASYNC_ENABLED:true}
+    progress-flush-interval-ms: ${PROGRESS_FLUSH_INTERVAL_MS:2000}
+    progress-flush-batch-size: ${PROGRESS_FLUSH_BATCH:200}
+  media:
+    # Short-lived signed play URL TTL (seconds). Local HMAC or Aliyun OSS V1 when OSS_ENABLED.
+    signed-ttl-seconds: ${MEDIA_SIGNED_TTL:900}
+    # Optional absolute API origin for signed local URLs; empty = relative /api/media/...
+    public-api-base: ${MEDIA_PUBLIC_API_BASE:}
+  rate-limit:
+    auth-per-minute: ${RL_AUTH_PER_MIN:60}
+    upload-per-minute: ${RL_UPLOAD_PER_MIN:30}
+    # 3s heartbeat ≈ 20 req/min/user; 180 leaves headroom for pause bursts / multi-tab
+    progress-per-minute: ${RL_PROGRESS_PER_MIN:180}
+  cache:
+    home-ttl-seconds: ${CACHE_HOME_TTL:30}
+    category-ttl-seconds: ${CACHE_CATEGORY_TTL:60}
+  shard:
+    # design switch for next iteration — see docs/HIGH_CONCURRENCY.md
+    enabled: ${SHARD_ENABLED:false}
+    progress-mod: ${SHARD_PROGRESS_MOD:16}
+    strategy: userId_mod
+
+logging:
+  level:
+    com.vlp: INFO
+    org.springframework.security: WARN

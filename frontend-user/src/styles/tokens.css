@@ -1,0 +1,43 @@
+
+:root {
+  --brand-50: #f0fdfa;
+  --brand-100: #ccfbf1;
+  --brand-500: #14b8a6;
+  --brand-600: #0d9488;
+  --brand-700: #0f766e;
+  --brand-800: #115e59;
+  --brand-900: #134e4a;
+  --ink-900: #0f172a;
+  --ink-700: #334155;
+  --ink-500: #64748b;
+  --ink-300: #cbd5e1;
+  --ink-200: #e2e8f0;
+  --ink-100: #f1f5f9;
+  --ink-50: #f8fafc;
+  --surface: #ffffff;
+  --danger: #e11d48;
+  --warning: #f59e0b;
+  --radius: 16px;
+  --shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+  --shadow-lg: 0 20px 50px rgba(15, 23, 42, 0.12);
+  --font: "DM Sans", "Noto Sans SC", system-ui, -apple-system, sans-serif;
+  --max: 1180px;
+}
+* { box-sizing: border-box; }
+html {
+  margin: 0;
+  min-height: 100%;
+  overflow-x: hidden;
+}
+body, #app { margin: 0; min-height: 100%; }
+body {
+  font-family: var(--font);
+  color: var(--ink-900);
+  background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+  width: 100%;
+}
+a { color: inherit; text-decoration: none; }
+button, input, textarea, select { font: inherit; }
+img, video { max-width: 100%; display: block; }

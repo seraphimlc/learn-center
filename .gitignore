@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build
+target/
+**/target/
+dist/
+**/dist/
+*.class
+*.jar
+!**/maven-wrapper.jar
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+**/secrets/
+*.pem
+*.key
+
+# Uploads & media
+uploads/
+**/uploads/
+!uploads/.gitkeep
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+.DS_Store
+
+# Logs
+*.log
+logs/
+**/logs/
+
+# Test / coverage
+coverage/
+.nyc_output/
