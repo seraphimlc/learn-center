@@ -29,6 +29,10 @@ import java.util.UUID;
 @Slf4j
 @Service
 @RequiredArgsConstructor
+/**
+ * 微信开放平台网站应用扫码登录（snsapi_login）+ 可选公众号网页授权 hook。
+ * state 存 Redis TTL 10m，回调一次性消费，防 CSRF/重放。
+ */
 public class WechatAuthService {
     private static final String STATE_KEY_PREFIX = "vlp:wechat:oauth:state:";
     private static final Duration STATE_TTL = Duration.ofMinutes(10);
@@ -160,15 +164,13 @@ public class WechatAuthService {
             if (v == null) {
                 throw new BusinessException(400, "微信登录 state 无效或已过期，请重试");
             }
-            redis.delete(key);
+            redis.delete(key); // 一次性，防重放 / CSRF
         } catch (BusinessException e) {
             throw e;
         } catch (Exception e) {
-            // Redis down: accept state format (32 hex) to avoid hard lockout
-            log.warn("Redis state check skipped: {}", e.getMessage());
-            if (state.length() < 16) {
-                throw new BusinessException(400, "微信登录 state 无效");
-            }
+            // Redis 不可用时拒绝回调，避免弱校验被 CSRF 利用（start 阶段本就会因 Redis 失败而 503）
+            log.warn("Redis state check failed, reject callback: {}", e.getMessage());
+            throw new BusinessException(503, "登录服务暂不可用，请稍后重试");
         }
     }
 

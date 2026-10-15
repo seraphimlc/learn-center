@@ -20,6 +20,11 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.Comparator;
 
+/**
+ * 学习域核心服务。进度写优先委派 ProgressBufferService（Redis）；
+ * 读路径合并 Redis 缓冲与 MySQL，保证「我的学习 / continueLessonId」近实时。
+ * 完成判定：maxPosition ≥ duration×completionRatio 或 ended；课程进度=完成课时/总课时。
+ */
 @Service
 @RequiredArgsConstructor
 public class LearnService {

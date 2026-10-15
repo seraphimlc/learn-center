@@ -191,7 +191,7 @@ public class AdminController {
 
     @GetMapping("/export/study")
     public ResponseEntity<byte[]> exportStudy() throws Exception {
-        byte[] data = adminService.exportStudyCsv();
+        byte[] data = adminService.exportStudyCsv(AuthContext.current());
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=study-export.csv")
                 .contentType(MediaType.parseMediaType("text/csv"))
@@ -200,10 +200,12 @@ public class AdminController {
 
     @GetMapping("/users/import-template")
     public ResponseEntity<byte[]> importTemplate() throws Exception {
+        // 模板含示例口令列，仅超管
+        byte[] body = adminService.userImportTemplate(AuthContext.current());
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=user-import-template.csv")
                 .contentType(MediaType.parseMediaType("text/csv"))
-                .body(adminService.userImportTemplate());
+                .body(body);
     }
 
     @PostMapping("/users/import")

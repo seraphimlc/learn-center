@@ -7,6 +7,7 @@ import com.vlp.stats.service.VisitService;
 import com.vlp.cert.entity.Certificate;
 import com.vlp.cert.service.CertificateService;
 import com.vlp.common.BusinessException;
+import com.vlp.common.HtmlSanitizer;
 import com.vlp.common.PageResult;
 import com.vlp.content.entity.*;
 import com.vlp.content.repo.*;
@@ -30,6 +31,10 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.*;
 
+/**
+ * 管理端聚合服务。所有写路径必须经 {@link AdminRoles} 细粒度校验；
+ * Spring Security 的 hasAnyRole 只负责「能否进入管理 API」。
+ */
 @Service
 @RequiredArgsConstructor
 public class AdminService {
@@ -134,6 +139,8 @@ public class AdminService {
         if ("PUBLISHED".equals(news.getStatus()) && news.getPublishedAt() == null) {
             news.setPublishedAt(LocalDateTime.now());
         }
+        // 用户端 NewsDetail 使用 v-html，入库前收敛 script/事件属性
+        news.setContent(HtmlSanitizer.sanitize(news.getContent()));
         News saved = newsRepository.save(news);
         auditService.log(op, "SAVE_NEWS", "NEWS", String.valueOf(saved.getId()), saved.getTitle());
         return saved;
@@ -173,6 +180,7 @@ public class AdminService {
     public Course saveCourse(UserPrincipal op, Course c) {
         AdminRoles.requireContentWriter(op);
         if (c.getId() == null) c.setCreatedBy(op.getId());
+        c.setDescription(HtmlSanitizer.sanitize(c.getDescription()));
         Course saved = courseRepository.save(c);
         auditService.log(op, "SAVE_COURSE", "COURSE", String.valueOf(saved.getId()), saved.getTitle());
         return saved;
@@ -277,7 +285,8 @@ public class AdminService {
         return r;
     }
 
-    public byte[] exportStudyCsv() throws Exception {
+    public byte[] exportStudyCsv(UserPrincipal op) throws Exception {
+        AdminRoles.requireDataExporter(op);
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         try (CSVWriter writer = new CSVWriter(new OutputStreamWriter(bos, StandardCharsets.UTF_8))) {
             writer.writeNext(new String[]{"userId", "courseId", "lessonId", "positionSeconds", "studiedSeconds", "completed", "updatedAt"});
@@ -292,7 +301,8 @@ public class AdminService {
         return bos.toByteArray();
     }
 
-    public byte[] userImportTemplate() throws Exception {
+    public byte[] userImportTemplate(UserPrincipal op) throws Exception {
+        AdminRoles.requireUserManager(op);
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         try (CSVWriter writer = new CSVWriter(new OutputStreamWriter(bos, StandardCharsets.UTF_8))) {
             writer.writeNext(new String[]{"username", "password", "email", "nickname"});

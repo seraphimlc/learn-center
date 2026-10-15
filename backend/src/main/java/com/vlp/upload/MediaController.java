@@ -1,9 +1,11 @@
 package com.vlp.upload;
 
 import com.vlp.common.BusinessException;
+import com.vlp.security.AdminRoles;
 import com.vlp.security.AuthContext;
 import com.vlp.security.UserPrincipal;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
@@ -16,18 +18,17 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * Authenticated / signed media streaming (Range).
+ * 媒体流式输出（支持 Range）。
  * <p>
- * Anti-download (practical, not DRM):
+ * 视频 ACL（一期基线，非 DRM）：
  * <ul>
- *   <li>No permanent public object ACL — clients get JWT or short-lived {@code expires}+{@code sig}</li>
- *   <li>Prefer Range streaming; full-file download is harder without a valid token</li>
- *   <li>Soft Referer check when header is present</li>
- *   <li>Player UI: {@code controlsList=nodownload} + contextmenu block (frontend)</li>
+ *   <li>封面图 /api/media/images/** 可匿名</li>
+ *   <li>视频必须：短时签名 {@code expires+sig}，或管理端员工 JWT 预览</li>
+ *   <li>普通学员仅持 JWT、无签名时不可凭 opaque videoPath 直下整文件</li>
+ *   <li>软 Referer 校验；前端 nodownload / 禁右键仅为威慑</li>
  * </ul>
- * Honest limit: browsers can still capture network bytes or screen-record during the TTL.
- * Specialized DRM (Widevine / FairPlay) is out of scope for phase 1.
  */
+@Slf4j
 @RestController
 @RequestMapping("/api/media")
 @RequiredArgsConstructor
@@ -67,7 +68,6 @@ public class MediaController {
         ResourceRegion region;
         HttpStatus status;
         if (headers.getRange().isEmpty()) {
-            // Prefer Range for video; still allow full GET for short clips / probes
             region = new ResourceRegion(resource, 0, length);
             status = HttpStatus.OK;
         } else {
@@ -86,14 +86,19 @@ public class MediaController {
                 .body(region);
     }
 
+    /**
+     * 视频：优先校验短时签名；仅管理端员工可用 JWT 预览未签发 URL。
+     * 普通 USER 即使已登录，无有效 sig 也不可按路径拉取。
+     */
     private void assertVideoAccess(jakarta.servlet.http.HttpServletRequest request,
                                    String rel, String expires, String sig) {
-        UserPrincipal user = AuthContext.optional();
         boolean signedOk = mediaSigningService.verifyLocalSignature(rel, expires, sig);
-        if (user == null && !signedOk) {
+        UserPrincipal user = AuthContext.optional();
+        boolean staffPreview = AdminRoles.isStaff(user);
+        if (!signedOk && !staffPreview) {
+            log.info("media.deny path={} hasUser={} signed={}", rel, user != null, signedOk);
             throw new BusinessException(401, "未登录或播放链接已过期");
         }
-        // Soft anti-hotlink: if Referer is sent, it should match an allowed origin
         String referer = request.getHeader("Referer");
         if (referer != null && !referer.isBlank() && allowedOrigins != null) {
             boolean ok = false;
@@ -104,8 +109,6 @@ public class MediaController {
                     break;
                 }
             }
-            // Also allow same-host relative / empty browser cases by not failing hard when
-            // Referer is from our API host (media played via absolute URL on same site).
             if (!ok && (referer.contains("localhost") || referer.contains("127.0.0.1")
                     || referer.contains("visitworld.me"))) {
                 ok = true;

@@ -22,10 +22,13 @@ vlp:
   upload:
     dir: /tmp/vlp-test-uploads
     allowed-video: mp4,webm
-    allowed-image: jpg,png,svg
+    allowed-image: jpg,png
   cors:
     origins: http://localhost:5173
   llm:
     base-url: http://127.0.0.1:9/v1
     api-key: ""
     model: test
+
+  auth:
+    public-reset-enabled: true

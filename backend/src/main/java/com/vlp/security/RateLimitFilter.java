@@ -14,16 +14,19 @@ import java.io.IOException;
 import java.time.Duration;
 
 /**
- * Redis fixed-window rate limiter for auth / upload / progress endpoints.
- * Progress default allows ~3s heartbeats (≈20/min/user) with headroom (see RL_PROGRESS_PER_MIN).
+ * Redis 固定窗口限流。auth/login/reset 更严以抗撞库；progress 默认 180 覆盖 3s 心跳。
+ * Redis 宕机时 fail-open，保证站点可用（依赖其它层防护）。
  */
 @Component
 @RequiredArgsConstructor
 public class RateLimitFilter extends OncePerRequestFilter {
     private final StringRedisTemplate redis;
 
-    @Value("${vlp.rate-limit.auth-per-minute:60}")
+    @Value("${vlp.rate-limit.auth-per-minute:30}")
     private int authLimit;
+
+    @Value("${vlp.rate-limit.reset-per-minute:10}")
+    private int resetLimit;
 
     @Value("${vlp.rate-limit.upload-per-minute:30}")
     private int uploadLimit;
@@ -37,10 +40,14 @@ public class RateLimitFilter extends OncePerRequestFilter {
         String path = request.getRequestURI();
         String bucket = null;
         int limit = 0;
-        if (path.startsWith("/api/auth/")) {
+        if (path.equals("/api/auth/reset-password")) {
+            bucket = "reset";
+            limit = resetLimit;
+        } else if (path.startsWith("/api/auth/")) {
             bucket = "auth";
             limit = authLimit;
-        } else if (path.startsWith("/api/admin/upload") || path.contains("/upload")) {
+        } else if (path.startsWith("/api/admin/upload") || path.endsWith("/upload")) {
+            // 收窄：避免 path.contains("/upload") 误伤无关路径
             bucket = "upload";
             limit = uploadLimit;
         } else if (path.startsWith("/api/learn/progress")) {
@@ -62,15 +69,15 @@ public class RateLimitFilter extends OncePerRequestFilter {
                     return;
                 }
             } catch (Exception ignored) {
-                // Redis down: fail open so the site stays up
+                // Redis down: fail open
             }
         }
         chain.doFilter(request, response);
     }
 
     /**
-     * Prefer X-Forwarded-For first hop when present (nginx must overwrite, not append client value).
-     * Reject blank / obviously invalid tokens so spoofed garbage does not shard the bucket forever.
+     * 取 X-Forwarded-For 首跳；nginx 必须覆盖而非追加客户端伪造值。
+     * 校验形态，防止畸形 XFF 打散限流桶。
      */
     private String clientIp(HttpServletRequest request) {
         String xff = request.getHeader("X-Forwarded-For");

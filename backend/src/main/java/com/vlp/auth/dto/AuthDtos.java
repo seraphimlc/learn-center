@@ -11,7 +11,7 @@ public class AuthDtos {
         @Size(min = 3, max = 32, message = "用户名长度 3-32")
         private String username;
         @NotBlank(message = "密码不能为空")
-        @Size(min = 6, max = 64, message = "密码长度至少 6 位")
+        @Size(min = 8, max = 64, message = "密码长度至少 8 位")
         private String password;
         private String email;
         private String nickname;
@@ -32,7 +32,7 @@ public class AuthDtos {
         @NotBlank
         private String email;
         @NotBlank
-        @Size(min = 6, max = 64)
+        @Size(min = 8, max = 64, message = "密码长度至少 8 位")
         private String newPassword;
     }
 
@@ -41,7 +41,7 @@ public class AuthDtos {
         @NotBlank
         private String oldPassword;
         @NotBlank
-        @Size(min = 6, max = 64)
+        @Size(min = 8, max = 64, message = "密码长度至少 8 位")
         private String newPassword;
     }
 

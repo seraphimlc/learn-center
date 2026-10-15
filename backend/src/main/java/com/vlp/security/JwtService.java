@@ -11,6 +11,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.Map;
 
+/**
+ * HS256 JWT 签发/校验。密钥必须 ≥32 字节；生产务必用环境变量 JWT_SECRET 覆盖默认值。
+ * 无状态：登出不立即失效（P2 可加 Redis 黑名单）。claims 含 uid + role，供 RBAC 使用。
+ */
 @Service
 public class JwtService {
     private final SecretKey key;

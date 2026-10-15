@@ -9,6 +9,10 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * AI 学情中心 API（需登录）。LLM 不可用时 AiService 返回 degraded 规则兜底，不抛 500。
+ * 知识点/摘要等可落 ai_cache；测验会话暂存在内存（单机）。
+ */
 @RestController
 @RequestMapping("/api/ai")
 @RequiredArgsConstructor

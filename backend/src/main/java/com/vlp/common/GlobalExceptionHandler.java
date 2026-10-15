@@ -1,6 +1,7 @@
 package com.vlp.common;
 
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
@@ -10,9 +11,13 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import java.util.stream.Collectors;
 
+/**
+ * 统一异常出口：业务异常返回明确文案；未知异常只记日志+通用提示，不向客户端泄漏堆栈。
+ */
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -27,6 +32,9 @@ public class GlobalExceptionHandler {
         else if (e.getCode() == 503) status = HttpStatus.SERVICE_UNAVAILABLE;
         else if (e.getCode() == 502) status = HttpStatus.BAD_GATEWAY;
         else if (e.getCode() == 400) status = HttpStatus.BAD_REQUEST;
+        if (e.getCode() >= 500) {
+            log.warn("biz error code={} msg={} rid={}", e.getCode(), e.getMessage(), MDC.get("requestId"));
+        }
         return ResponseEntity.status(status).body(ApiResponse.fail(e.getCode(), e.getMessage()));
     }
 
@@ -37,6 +45,12 @@ public class GlobalExceptionHandler {
                 .map(FieldError::getDefaultMessage)
                 .collect(Collectors.joining("; "));
         return ApiResponse.fail(400, msg.isEmpty() ? "参数校验失败" : msg);
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public ApiResponse<Void> handleUploadSize(MaxUploadSizeExceededException e) {
+        return ApiResponse.fail(400, "上传文件超过大小限制");
     }
 
     @ExceptionHandler(BadCredentialsException.class)
@@ -54,7 +68,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     public ApiResponse<Void> handleOther(Exception e) {
-        log.error("Unhandled error", e);
+        log.error("Unhandled error rid={}", MDC.get("requestId"), e);
         return ApiResponse.fail(500, "服务器内部错误，请稍后重试");
     }
 }

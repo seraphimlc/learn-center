@@ -13,6 +13,11 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 学员学习域公开契约（需登录）。
+ * 播放必须先 {@code GET /play-url/{lessonId}} 拿短时签名 URL，再请求 /api/media；
+ * 进度 {@code POST /progress} 默认走 Redis 缓冲（约 3s 心跳）。
+ */
 @RestController
 @RequestMapping("/api/learn")
 @RequiredArgsConstructor
@@ -20,13 +25,13 @@ public class LearnController {
     private final LearnService learnService;
     private final MediaSigningService mediaSigningService;
 
-
-    /** Mint short-lived signed play URL (login required). Does not expose permanent OSS URLs. */
+    /** 签发短时播放地址；不回传永久 OSS 公链。 */
     @GetMapping("/play-url/{lessonId}")
     public ApiResponse<Map<String, Object>> playUrl(@PathVariable Long lessonId) {
         return ApiResponse.ok(mediaSigningService.mintPlayUrl(AuthContext.current(), lessonId));
     }
 
+    /** 进度上报：心跳 / pause / ended；服务端单调 maxPosition + 完成比例判定。 */
     @PostMapping("/progress")
     public ApiResponse<StudyProgress> progress(@Valid @RequestBody ProgressReport req) {
         return ApiResponse.ok(learnService.reportProgress(AuthContext.current(), req));

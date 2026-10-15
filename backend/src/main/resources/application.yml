@@ -82,6 +82,9 @@ management:
       show-details: when_authorized
 
 vlp:
+  auth:
+    # 公开找回（用户名+邮箱，无 OTP）。客户审计若要求关闭：PUBLIC_RESET_ENABLED=false
+    public-reset-enabled: ${PUBLIC_RESET_ENABLED:true}
   jwt:
     secret: ${JWT_SECRET:VlpPhase1JwtSecretKeyMustBeLongEnoughForHs256Algorithm2026!!}
     expire-hours: 72
@@ -99,7 +102,7 @@ vlp:
     dir: ${UPLOAD_DIR:../uploads}
     max-video-mb: 500
     allowed-video: mp4,webm,mov,m4v
-    allowed-image: jpg,jpeg,png,gif,webp
+    allowed-image: jpg,jpeg,png,gif,webp  # 禁止 svg（可嵌脚本）
   cors:
     origins: ${VLP_CORS_ORIGINS:http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174,https://learn.visitworld.me}
   oss:
@@ -131,7 +134,8 @@ vlp:
     # Optional absolute API origin for signed local URLs; empty = relative /api/media/...
     public-api-base: ${MEDIA_PUBLIC_API_BASE:}
   rate-limit:
-    auth-per-minute: ${RL_AUTH_PER_MIN:60}
+    auth-per-minute: ${RL_AUTH_PER_MIN:30}
+    reset-per-minute: ${RL_RESET_PER_MIN:10}
     upload-per-minute: ${RL_UPLOAD_PER_MIN:30}
     # 3s heartbeat ≈ 20 req/min/user; 180 leaves headroom for pause bursts / multi-tab
     progress-per-minute: ${RL_PROGRESS_PER_MIN:180}
@@ -145,6 +149,8 @@ vlp:
     strategy: userId_mod
 
 logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} rid=%X{requestId} - %msg%n"
   level:
     com.vlp: INFO
     org.springframework.security: WARN
