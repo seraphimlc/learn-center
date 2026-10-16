@@ -1,6 +1,5 @@
 package com.vlp.learn.service;
 
-import com.vlp.cert.service.CertificateService;
 import com.vlp.common.BusinessException;
 import com.vlp.content.entity.Course;
 import com.vlp.content.entity.Lesson;
@@ -12,7 +11,6 @@ import com.vlp.learn.async.ProgressBufferService;
 import com.vlp.learn.repo.*;
 import com.vlp.security.UserPrincipal;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,117 +19,41 @@ import java.util.*;
 import java.util.Comparator;
 
 /**
- * 学习域核心服务。进度写优先委派 ProgressBufferService（Redis）；
- * 读路径合并 Redis 缓冲与 MySQL，保证「我的学习 / continueLessonId」近实时。
- * 完成判定：maxPosition ≥ duration×completionRatio 或 ended；课程进度=完成课时/总课时。
+ * 学习域核心服务。播放进度（position）仅写 Redis（ProgressBufferService）；
+ * 读路径 prefer Redis，miss 视为 0，不依赖 MySQL 做续播位置。
+ * 课时完成时稀疏写一次 MySQL 供证书；课程进度%=完成课时/总课时（Redis 完成标记）。
  */
 @Service
 @RequiredArgsConstructor
 public class LearnService {
-    private final StudyProgressRepository progressRepository;
     private final StudyNoteRepository noteRepository;
     private final BookmarkRepository bookmarkRepository;
     private final LessonRepository lessonRepository;
     private final CourseRepository courseRepository;
-    private final CertificateService certificateService;
     private final ProgressBufferService progressBufferService;
 
-    @Value("${vlp.learn.completion-ratio:0.9}")
-    private double defaultCompletionRatio;
-
-    @Value("${vlp.learn.progress-max-jump-seconds:120}")
-    private int maxJump;
-
-    @Transactional
     public StudyProgress reportProgress(UserPrincipal me, ProgressReport req) {
-        if (progressBufferService.isAsyncEnabled()) {
-            return progressBufferService.accept(me, req);
-        }
-        Lesson lesson = lessonRepository.findById(req.getLessonId())
-                .orElseThrow(() -> new BusinessException("课时不存在"));
-        Course course = courseRepository.findById(lesson.getCourseId())
-                .orElseThrow(() -> new BusinessException("课程不存在"));
-
-        StudyProgress p = progressRepository.findByUserIdAndLessonId(me.getId(), lesson.getId())
-                .orElseGet(() -> StudyProgress.builder()
-                        .userId(me.getId())
-                        .courseId(lesson.getCourseId())
-                        .lessonId(lesson.getId())
-                        .build());
-
-        int pos = Math.max(0, req.getPositionSeconds());
-        int maxPos = Optional.ofNullable(p.getMaxPositionSeconds()).orElse(0);
-        boolean ended = Boolean.TRUE.equals(req.getEnded());
-        // anti-cheat: progress is monotonic; allow small jump for seek within maxJump of max
-        if (!ended && pos > maxPos + maxJump) {
-            pos = maxPos; // reject big forward jump
-        }
-        if (pos > maxPos) maxPos = pos;
-        if (ended && req.getVideoDurationSeconds() != null && req.getVideoDurationSeconds() > maxPos) {
-            maxPos = req.getVideoDurationSeconds();
-            pos = Math.max(pos, maxPos);
-        }
-
-        p.setPositionSeconds(pos);
-        p.setMaxPositionSeconds(maxPos);
-        if (req.getDeltaSeconds() != null && req.getDeltaSeconds() > 0) {
-            int delta = Math.min(req.getDeltaSeconds(), 60); // cap per report (3s heartbeat ≪ 60; blocks inflated deltas)
-            p.setStudiedSeconds(Optional.ofNullable(p.getStudiedSeconds()).orElse(0) + delta);
-        }
-        if (Boolean.TRUE.equals(req.getHeartbeat())) {
-            p.setLastHeartbeatAt(LocalDateTime.now());
-        }
-
-        int duration = syncLessonDuration(lesson, req.getVideoDurationSeconds());
-        double ratio = course.getCompletionRatio() != null ? course.getCompletionRatio() : defaultCompletionRatio;
-        boolean shouldComplete = Boolean.TRUE.equals(req.getEnded());
-        if (!shouldComplete && duration > 0) {
-            shouldComplete = maxPos >= (int) Math.ceil(duration * ratio);
-        }
-        if (shouldComplete && !Boolean.TRUE.equals(p.getCompleted())) {
-            p.setCompleted(true);
-            p.setCompletedAt(LocalDateTime.now());
-            if (pos < maxPos) p.setPositionSeconds(maxPos);
-        }
-        progressRepository.save(p);
-
-        maybeIssueCert(me.getId(), course);
-        return p;
-    }
-
-    private void maybeIssueCert(Long userId, Course course) {
-        List<Lesson> lessons = lessonRepository.findByCourseIdOrderBySortOrderAsc(course.getId());
-        if (lessons.isEmpty()) return;
-        List<StudyProgress> all = progressRepository.findByUserIdAndCourseId(userId, course.getId());
-        long done = all.stream().filter(x -> Boolean.TRUE.equals(x.getCompleted())).count();
-        double rate = done * 1.0 / lessons.size();
-        double need = course.getCompletionRatio() != null ? course.getCompletionRatio() : defaultCompletionRatio;
-        if (rate >= need) {
-            certificateService.issueIfAbsent(userId, course, rate);
-        }
+        // Always Redis-only for heartbeats (no MySQL position path).
+        return progressBufferService.accept(me, req);
     }
 
     public List<Map<String, Object>> myLearning(Long userId) {
-        List<StudyProgress> list = progressRepository.findByUserIdOrderByUpdatedAtDesc(userId);
+        List<StudyProgress> all = progressBufferService.listUserProgress(userId);
         Map<Long, StudyProgress> latestByCourse = new LinkedHashMap<>();
-        for (StudyProgress p : list) {
+        for (StudyProgress p : all) {
             latestByCourse.putIfAbsent(p.getCourseId(), p);
         }
-        // also surface courses that only exist in redis buffer
-        Set<Long> courseIds = new LinkedHashSet<>(latestByCourse.keySet());
         List<Map<String, Object>> out = new ArrayList<>();
-        for (Long courseId : courseIds) {
-            StudyProgress p = latestByCourse.get(courseId);
-            Map<String, Object> row = new LinkedHashMap<>();
+        for (Map.Entry<Long, StudyProgress> e : latestByCourse.entrySet()) {
+            Long courseId = e.getKey();
             Course c = courseRepository.findById(courseId).orElse(null);
             if (c == null) continue;
             List<Lesson> lessons = lessonRepository.findByCourseIdOrderBySortOrderAsc(c.getId());
-            List<StudyProgress> dbRows = progressRepository.findByUserIdAndCourseId(userId, c.getId());
-            Map<Long, StudyProgress> merged = progressBufferService.mergeCourseProgress(userId, c.getId(), dbRows);
-            // keep latest activity ordering using merged updatedAt
+            Map<Long, StudyProgress> merged = progressBufferService.loadCourseProgress(userId, c.getId(), lessons);
             StudyProgress latest = merged.values().stream()
                     .max(Comparator.comparing(x -> Optional.ofNullable(x.getUpdatedAt()).orElse(LocalDateTime.MIN)))
-                    .orElse(p);
+                    .orElse(e.getValue());
+            Map<String, Object> row = new LinkedHashMap<>();
             row.put("lastProgress", latest);
             row.put("course", c);
             long done = merged.values().stream().filter(x -> Boolean.TRUE.equals(x.getCompleted())).count();
@@ -149,7 +71,7 @@ public class LearnService {
                 }
             }
             if (continueLesson == null && !lessons.isEmpty()) {
-                continueLesson = lessons.get(lessons.size() - 1); // all done → last lesson
+                continueLesson = lessons.get(lessons.size() - 1);
             }
             if (continueLesson != null) {
                 row.put("continueLessonId", continueLesson.getId());
@@ -162,7 +84,6 @@ public class LearnService {
             }
             out.add(row);
         }
-        // sort by latest activity
         out.sort((a, b) -> {
             StudyProgress pa = (StudyProgress) a.get("lastProgress");
             StudyProgress pb = (StudyProgress) b.get("lastProgress");
@@ -171,24 +92,6 @@ public class LearnService {
             return tb.compareTo(ta);
         });
         return out;
-    }
-
-    private int syncLessonDuration(Lesson lesson, Integer videoDurationSeconds) {
-        int duration = Optional.ofNullable(lesson.getDurationSeconds()).orElse(0);
-        if (videoDurationSeconds == null || videoDurationSeconds <= 0) return duration;
-        int reported = videoDurationSeconds;
-        if (duration <= 0 || Math.abs(duration - reported) >= 5) {
-            lesson.setDurationSeconds(reported);
-            lessonRepository.save(lesson);
-            courseRepository.findById(lesson.getCourseId()).ifPresent(c -> {
-                List<Lesson> list = lessonRepository.findByCourseIdOrderBySortOrderAsc(c.getId());
-                c.setDurationSeconds(list.stream().mapToInt(x -> Optional.ofNullable(x.getDurationSeconds()).orElse(0)).sum());
-                c.setLessonCount(list.size());
-                courseRepository.save(c);
-            });
-            return reported;
-        }
-        return duration;
     }
 
     @Transactional

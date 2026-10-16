@@ -7,7 +7,7 @@
 | 级别 | 项 | 处理 |
 |------|----|------|
 | P0 | 管理端 RBAC：`CONTENT_ADMIN` / `DATA_VIEWER` 可走全部写接口 | `AdminRoles` + `AdminService` 写路径校验；管理端菜单/路由按角色裁剪 |
-| P1 | Redis 进度 flush 与心跳并发丢失更新 | `ProgressBufferService.flushDirty`：仅当 Redis 值未变才清 dirty；并发时保留 dirty 且不覆盖新心跳 |
+| P1 | ~~Redis 进度 flush 丢更新~~ | **已取消 flush**（2026-10-16）：position 仅 Redis；完成稀疏写 |
 | P1 | `LearnService.reportProgress` 空操作死代码 | 删除无意义 if 块 |
 | P1 | 限流 IP 伪造（畸形 XFF） | `RateLimitFilter` 校验首跳是否像 IP；依赖 nginx **覆盖**而非追加 XFF |
 
@@ -22,7 +22,7 @@
 
 ### 正确性 / 可靠性
 - `syncLessonDuration` 在 `LearnService` 与 `ProgressBufferService` **重复**；心跳路径上写课时/课程元数据会放大 DB 写——应收口到单一服务并降频。
-- `tryMaybeCert` 在 Redis 未 flush 前用 DB 统计完成数，可能延迟发证（flush 后会再查）。
+- `tryMaybeCert` 已改为读 Redis 完成标记（完成当下发证）。
 - `RateLimitFilter` 中 `path.contains("/upload")` 过宽，可能误伤无关路径。
 - WeChat Redis 宕机时 state 降级为「长度≥16」弱校验（已有日志）——可改为本地 HMAC state。
 
@@ -38,7 +38,7 @@
 
 ### 测试缺口
 - 缺 RBAC 集成测试（DATA_VIEWER POST 应 403）。
-- 缺 ProgressBuffer 并发 flush 单测。
+- ProgressBuffer 心跳路径已有集成测试（Redis-only + 稀疏完成）。
 - 缺 play-url / media sig 过期用例。
 
 ## 前端核对（本轮观察，多数已健康）

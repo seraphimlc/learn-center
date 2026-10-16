@@ -20,7 +20,7 @@
 |------|--------|
 | `backend/src/main/java/com/vlp/security/` | JWT、限流、RBAC、安全头、RequestId |
 | `.../auth/` `.../auth/wechat/` | 账密与微信 |
-| `.../learn/async/ProgressBufferService` | 进度 Redis 缓冲（必读） |
+| `.../learn/async/ProgressBufferService` | 进度 Redis-only（必读；无 flush） |
 | `.../upload/MediaSigningService` `MediaController` | 播放签名与 ACL |
 | `.../admin/AdminService` `AdminRoles` | 管理写权限 |
 | `.../ai/` | AI 中心 |
@@ -96,7 +96,7 @@ bash scripts/e2e-smoke.sh
 - `WECHAT_ENABLED` / `WECHAT_APP_ID` / `WECHAT_APP_SECRET` / `WECHAT_REDIRECT_URI`  
 - `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL`  
 - `PUBLIC_RESET_ENABLED`  
-- `PROGRESS_ASYNC_ENABLED` / `MEDIA_SIGNED_TTL` / `RL_*`  
+- `PROGRESS_ASYNC_ENABLED` / `PROGRESS_TTL_DAYS` / `MEDIA_SIGNED_TTL` / `RL_*`  
 - `VLP_CORS_ORIGINS`  
 
 **禁止**把真实 AppSecret、LLM Key、生产 JWT 提交进 git。
@@ -107,7 +107,7 @@ bash scripts/e2e-smoke.sh
 
 1. **登录**：`AuthController` → `AuthService` → `JwtService` → `JwtAuthFilter`  
 2. **播放**：`PlayerView` → `GET /learn/play-url` → `MediaSigningService` → `MediaController`  
-3. **进度**：`POST /learn/progress` → `LearnService` → `ProgressBufferService.accept/flushDirty`  
+3. **进度**：`POST /learn/progress` → `LearnService` → `ProgressBufferService.accept`（**仅 Redis**；完成时稀疏写 MySQL）  
 4. **管理 RBAC**：`SecurityConfig` hasRole → `AdminService` + `AdminRoles.require*`  
 5. **微信**：`WechatAuthService` state Redis → callback upsert user  
 
@@ -128,7 +128,7 @@ bash scripts/e2e-smoke.sh
 | 坑 | 处理 |
 |----|------|
 | 播放 401 | 是否先调 play-url；签名是否过期；学员不能只靠 JWT 下视频 |
-| 进度不涨 | Redis 是否通；异步开关；完成比例与 duration 元数据 |
+| 进度不涨 | Redis 是否通；TTL 是否过期（过期=从 0）；完成比例与 duration |
 | 管理 403 | DATA_VIEWER 不能写；CONTENT_ADMIN 不能管用户 |
 | 微信 503 | 未配 AppId/Secret 或 Redis 挂 |
 | CORS | 把前端源加入 `VLP_CORS_ORIGINS` |
@@ -159,7 +159,7 @@ bash scripts/e2e-smoke.sh
 | 2 | `SecurityConfig` + `AdminRoles` | 谁能访问什么 |
 | 3 | `AuthService` + `JwtService` | token 怎么发 |
 | 4 | `WechatAuthService` | state 为什么必须 Redis |
-| 5 | `ProgressBufferService` | 为什么心跳不直写 MySQL |
+| 5 | `ProgressBufferService` | 为什么心跳**永不**写 MySQL；TTL；稀疏完成 |
 | 6 | `LearnService.myLearning` | continueLessonId |
 | 7 | `MediaSigningService` + `MediaController` | 为什么不能把 OSS 公链给前端 |
 | 8 | `AdminService` 写方法开头的 require* | RBAC 落点 |

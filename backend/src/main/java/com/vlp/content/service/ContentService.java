@@ -7,15 +7,12 @@ import com.vlp.content.repo.*;
 import com.vlp.cache.PublicContentCache;
 import com.vlp.learn.async.ProgressBufferService;
 import com.vlp.learn.entity.StudyProgress;
-import com.vlp.learn.repo.StudyProgressRepository;
 import com.vlp.upload.MediaSigningService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -25,7 +22,6 @@ public class ContentService {
     private final CourseRepository courseRepository;
     private final LessonRepository lessonRepository;
     private final BannerRepository bannerRepository;
-    private final StudyProgressRepository progressRepository;
     private final ProgressBufferService progressBufferService;
     private final PublicContentCache publicContentCache;
     private final MediaSigningService mediaSigningService;
@@ -33,7 +29,7 @@ public class ContentService {
     public Map<String, Object> home(Long userId) {
         Map<String, Object> m = new LinkedHashMap<>(publicContentCache.homeAnonPayload());
         if (userId != null) {
-            List<StudyProgress> recent = progressRepository.findByUserIdOrderByUpdatedAtDesc(userId).stream().limit(5).toList();
+            List<StudyProgress> recent = progressBufferService.listUserProgress(userId).stream().limit(5).toList();
             m.put("continueLearning", enrichProgress(recent));
         } else {
             m.put("continueLearning", List.of());
@@ -87,9 +83,8 @@ public class ContentService {
         m.put("course", c);
         m.put("lessons", lessons);
         if (userId != null) {
-            List<StudyProgress> dbRows = progressRepository.findByUserIdAndCourseId(userId, id);
-            Map<Long, StudyProgress> map = progressBufferService.mergeCourseProgress(userId, id, dbRows);
-            // stringify keys for stable frontend lookup (JSON Long keys become strings anyway)
+            // Redis-only live position; miss ⇒ no progress (0)
+            Map<Long, StudyProgress> map = progressBufferService.loadCourseProgress(userId, id, lessons);
             Map<String, StudyProgress> front = new LinkedHashMap<>();
             map.forEach((k, v) -> front.put(String.valueOf(k), v));
             m.put("progressMap", front);

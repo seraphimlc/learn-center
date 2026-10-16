@@ -7,6 +7,7 @@ import com.vlp.content.entity.Course;
 import com.vlp.content.entity.Lesson;
 import com.vlp.content.repo.CourseRepository;
 import com.vlp.content.repo.LessonRepository;
+import com.vlp.learn.repo.StudyProgressRepository;
 import com.vlp.user.entity.User;
 import com.vlp.user.repo.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,6 +35,7 @@ class AuthAndLearnIntegrationTest {
     @Autowired UserRepository userRepository;
     @Autowired CourseRepository courseRepository;
     @Autowired LessonRepository lessonRepository;
+    @Autowired StudyProgressRepository progressRepository;
     @Autowired PasswordEncoder passwordEncoder;
 
     Long lessonId;
@@ -102,15 +104,54 @@ class AuthAndLearnIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0));
 
+        // Dedicated course so completionRatio/duration are deterministic (seed data may differ)
+        Course pc = courseRepository.save(Course.builder()
+                .title("进度测-" + uniq)
+                .status("PUBLISHED")
+                .completionRatio(0.5)
+                .summary("progress-test")
+                .build());
+        Lesson pl = lessonRepository.save(Lesson.builder()
+                .courseId(pc.getId())
+                .title("进度课时")
+                .durationSeconds(100)
+                .videoPath("videos/progress-test.mp4")
+                .sortOrder(1)
+                .build());
+        long progressLessonId = pl.getId();
+
+        long dbBefore = progressRepository.count();
+
         mockMvc.perform(post("/api/learn/progress")
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"lessonId":%d,"positionSeconds":20,"deltaSeconds":10,"heartbeat":true}
-                                """.formatted(lessonId)))
+                                """.formatted(progressLessonId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0))
                 .andExpect(jsonPath("$.data.positionSeconds").value(20));
+
+        // Heartbeat must NOT persist position to MySQL (Redis-only ephemeral)
+        assertThat(progressRepository.count()).isEqualTo(dbBefore);
+
+        // Resume / my-learning reads from Redis
+        MvcResult my = mockMvc.perform(get("/api/learn/my")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andReturn();
+        JsonNode myData = objectMapper.readTree(my.getResponse().getContentAsString()).path("data");
+        assertThat(myData.isArray()).isTrue();
+        assertThat(myData.size()).isGreaterThanOrEqualTo(1);
+        boolean sawPos = false;
+        for (JsonNode row : myData) {
+            if (row.path("lastProgress").path("lessonId").asLong() == progressLessonId) {
+                assertThat(row.path("lastProgress").path("positionSeconds").asInt()).isEqualTo(20);
+                sawPos = true;
+            }
+        }
+        assertThat(sawPos).isTrue();
 
         // anti-cheat: huge jump should be clamped to max
         MvcResult r2 = mockMvc.perform(post("/api/learn/progress")
@@ -118,11 +159,28 @@ class AuthAndLearnIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"lessonId":%d,"positionSeconds":9999,"deltaSeconds":5,"heartbeat":true}
-                                """.formatted(lessonId)))
+                                """.formatted(progressLessonId)))
                 .andExpect(status().isOk())
                 .andReturn();
         JsonNode data = objectMapper.readTree(r2.getResponse().getContentAsString()).path("data");
         assertThat(data.path("positionSeconds").asInt()).isLessThan(9999);
+
+        // ended=true forces completion → sparse MySQL write once (not heartbeat flush)
+        mockMvc.perform(post("/api/learn/progress")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"lessonId":%d,"positionSeconds":100,"deltaSeconds":5,"ended":true,"videoDurationSeconds":100}
+                                """.formatted(progressLessonId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.completed").value(true));
+        assertThat(progressRepository.count()).isGreaterThan(dbBefore);
+        Long uid = userRepository.findByUsername(uniq).orElseThrow().getId();
+        assertThat(progressRepository.findByUserIdAndLessonId(uid, progressLessonId))
+                .isPresent()
+                .get()
+                .extracting(sp -> sp.getCompleted())
+                .isEqualTo(true);
     }
 
     @Test

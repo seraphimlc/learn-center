@@ -7,7 +7,7 @@
 | 能力 | 实现 |
 |------|------|
 | Redis 缓存 | 首页匿名壳（banners/hot/recommend/news/categories）`homeAnon` TTL≈30s；分类列表 `categories` TTL≈60s |
-| 进度异步化 | `ProgressBufferService`：写入 Redis + dirty set，定时批量 flush 至 MySQL（默认 2s / 批 200） |
+| 进度 Redis-only | `ProgressBufferService`：心跳只写 Redis（TTL 默认 14d）；无 dirty flush；完成稀疏写 MySQL |
 | 连接池 | Hikari `maximum-pool-size` 默认 50（可用 `HIKARI_MAX_POOL`）；Lettuce 连接池 max-active 64 |
 | Tomcat 线程 | max 400 / min-spare 50 / accept-count 200 / max-connections 10000 |
 | 接口限流 | Redis 固定窗口：auth / upload / progress（可配 `RL_*_PER_MIN`） |
@@ -27,15 +27,15 @@
 
 ### 2. 消息队列（可选升级）
 
-当前为 **Spring 定时 + Redis dirty set**。若多实例竞争 flush，下一迭代改为：
+进度已改为 **Redis-only**（无定时 flush）。多实例共享同一 Redis 即可。若未来要持久续播，另开需求，勿恢复高 QPS MySQL flush。
 
-- Redis Stream / Kafka topic `progress.report`
+历史方案（已废弃）：Spring 定时 + dirty set / Redis Stream 消费者组。
 - 消费者组批量写 DB；API 只 `XADD` / `LPUSH`
 
 ### 3. 读写分离
 
 - 读：首页缓存未命中、课程列表、新闻 → readonly 数据源
-- 写：进度 flush、注册、管理后台 → primary
+- 写：注册、管理后台、稀疏完成 → primary（心跳不写 MySQL）
 - 切点：配置 `DB_READONLY_ENABLED=true` 并接入 AbstractRoutingDataSource
 
 ### 4. 会话与 JWT
@@ -54,7 +54,7 @@
 ## 容量粗算（参考）
 
 - 用户规模：业务 **3 万** 注册；DID 设计 **30 万**；分库分表/读写分离按 30 万预留开关，非约 30 万（DID）级默认开启
-- 1 万在线 × 每 **3s** 心跳 ≈ **~3333 QPS** 进度写 → Redis 缓冲吸收；MySQL flush ≈ 批量 200/2s；单用户 ≈20 req/min，`RL_PROGRESS_PER_MIN` 默认 180
+- 1 万在线 × 每 **3s** 心跳 ≈ **~3333 QPS** 进度写 → **全部由 Redis 吸收**；MySQL 仅在课时完成时偶发写；单用户 ≈20 req/min，`RL_PROGRESS_PER_MIN` 默认 180
 - 首页读：缓存命中后 API≈内存级；未命中打库由 TTL 收敛
 - 连接：Tomcat 400 线程 + Hikari 50 足够单机峰值；再高优先加副本而非盲目加线程
 
@@ -62,7 +62,7 @@
 
 ```
 PROGRESS_ASYNC_ENABLED=true
-PROGRESS_FLUSH_INTERVAL_MS=2000
+PROGRESS_TTL_DAYS=14
 HIKARI_MAX_POOL=50
 TOMCAT_MAX_THREADS=400
 CACHE_HOME_TTL=30

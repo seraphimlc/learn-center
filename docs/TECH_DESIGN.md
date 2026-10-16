@@ -122,17 +122,18 @@ news / banners / site_config / audit_logs / visit_log / ai_cache / study_alerts
 
 | Key/用途 | TTL/结构 | 失败策略 |
 |----------|----------|----------|
-| `vlp:progress:{uid}:{lessonId}` | String JSON，7d | 写失败则同步落 MySQL |
-| `vlp:progress:dirty` | Set | flush 2s / 批 200；值未变才清 dirty（防并发丢更新） |
+| `vlp:progress:{uid}:{lessonId}` | String JSON，**TTL 默认 14d**（`PROGRESS_TTL_DAYS`，建议 7–30） | **权威播放位置**；写失败不落 MySQL（返回 503） |
+| `vlp:progress:idx:{uid}` | Set(lessonId)，同 TTL | 「我的学习 / 继续学习」索引，无 DB 扫描 |
 | `vlp:cache:homeAnon` 等 | Cache TTL ~30–60s | 未命中打库 |
 | `rl:{bucket}:{ip}:{minute}` | 计数 2min | fail-open |
 | `vlp:wechat:oauth:state:{state}` | 10m | start/回调均依赖；宕机拒绝 OAuth |
 
-权威数据在 MySQL。Redis 不做长期进度源。
+**播放进度（position / max / studied / 续播）以 Redis 为唯一源。** Redis 重启或 TTL 过期后进度可丢失（产品可接受，从 0 或残留 key 续播）。  
+`study_progress` 仅在课时**首次完成**时稀疏写入完成标记（供证书 / 管理导出），**心跳路径永不 flush MySQL**。
 
-### 5.1 进度并发
+### 5.1 进度写路径（无 scheduled flush）
 
-`flushDirty`：读 dirty → 写 DB → 再读 Redis；若与快照相同则清 dirty 并回写带 id 的 JSON；若不同则保留 dirty，避免覆盖更新心跳。
+已移除 `vlp:progress:dirty` 与 `flushDirty` 定时任务。3s 心跳只 `SET` Redis + 刷新用户索引 TTL。
 
 ---
 
@@ -166,10 +167,10 @@ CSRF：无 Cookie 会话故关闭。HSTS：生产 nginx。
 | 项 | 说明 |
 |----|------|
 | Request-Id | `X-Request-Id` + MDC `rid=` |
-| 日志 | auth.login.* / media.deny / progress flush warn；禁打密钥 |
+| 日志 | auth.login.* / media.deny / progress redis 写失败 warn；禁打密钥 |
 | Actuator | `/actuator/health`、`/info`；勿对公网暴露更多 |
-| 业务看板 | PV/UV、学习指标 |
-| 建议盯 | Redis dirty 大小、Hikari active、Tomcat 线程、5xx 率、磁盘 uploads |
+| 业务看板 | PV/UV、学习指标（完成行稀疏，看板「学习人数」偏完成态） |
+| 建议盯 | Redis 进度 key 数量 / 内存、Hikari active、Tomcat 线程、5xx 率、磁盘 uploads |
 
 AlertScheduler：每日扫描长期未学并发通知。
 
@@ -186,10 +187,11 @@ AlertScheduler：每日扫描长期未学并发通知。
 ## 11. 已知 P2 债（摘自 CODE_REVIEW）
 
 - 找回无 OTP（可关开关）  
-- syncLessonDuration 重复；tryMaybeCert 可能延迟  
+- syncLessonDuration 重复  
 - AdminService/Controller 偏胖  
-- 缺 RBAC / ProgressBuffer / play-url 自动化测试补强  
-- 读写分离 / MQ flush / 真 OSS 凭证待商务确认  
+- 缺 RBAC / play-url 自动化测试补强  
+- 读写分离 / 真 OSS 凭证待商务确认  
+- 学情预警 / AI 学情仍读 `study_progress`（仅稀疏完成行，非实时 position）  
 
 ---
 
@@ -222,26 +224,22 @@ Spring Boot 启动 `TomcatServletWebServerFactory`（默认），监听 `SERVER_
 
 线程：`TOMCAT_MAX_THREADS` 默认 400，`max-connections` 10000，`accept-count` 200。连接池 Hikari 默认 50。这是单机 jar 调优，不是外置 Tomcat `server.xml`。
 
-## 14. 进度状态机
+## 14. 进度状态机（Redis-only position）
 
 ```
 上报 position, delta, heartbeat, ended, videoDuration
-  → 加载 Redis JSON 或 DB 行
+  → 加载 Redis JSON（miss ⇒ 新建 0；不读 MySQL 做续播）
   → pos 截断（非 ended 且 > max+jump）
   → max = max(max, pos)；（ended 可用视频时长抬高 max）
   → studied += min(delta, 60)
   → 完成：ended OR max >= ceil(duration * ratio)
-  → SET Redis + SADD dirty
-  → 若 completed：尝试发证（可能因 DB 滞后延迟）
+  → SET Redis TTL(PROGRESS_TTL_DAYS) + SADD 用户索引
+  → 若本次首次 completed：稀疏 upsert study_progress(completed) + tryMaybeCert（用 Redis 完成数）
 
-定时 flushDirty:
-  → SPOP/随机抽样 batch
-  → upsert study_progress
-  → 若 Redis 值未变：写回 id 并 SREM dirty
-  → 若变了：保留 dirty（下轮再刷）
+无定时 flush。心跳永不写 MySQL。
 ```
 
-读路径 `mergeCourseProgress`：DB 行 + overlay Redis。
+读路径 `loadCourseProgress` / `listUserProgress`：仅 Redis；miss = 无进度。
 
 ## 15. JWT 载荷
 
@@ -260,8 +258,9 @@ iat / exp
 |-----|-----|----------|
 | vlp.jwt.secret | JWT_SECRET | 生产必改 |
 | vlp.auth.public-reset-enabled | PUBLIC_RESET_ENABLED | true |
-| vlp.learn.progress-async-enabled | PROGRESS_ASYNC_ENABLED | true |
-| vlp.learn.progress-flush-interval-ms | PROGRESS_FLUSH_INTERVAL_MS | 2000 |
+| vlp.learn.progress-async-enabled | PROGRESS_ASYNC_ENABLED | true（兼容开关；心跳始终 Redis-only） |
+| vlp.learn.progress-ttl-days | PROGRESS_TTL_DAYS | 14（建议 7–30） |
+| vlp.learn.progress-flush-interval-ms | PROGRESS_FLUSH_INTERVAL_MS | （已废弃，无 flush） |
 | vlp.media.signed-ttl-seconds | MEDIA_SIGNED_TTL | 900 |
 | vlp.rate-limit.auth-per-minute | RL_AUTH_PER_MIN | 30 |
 | vlp.rate-limit.reset-per-minute | RL_RESET_PER_MIN | 10 |
@@ -280,7 +279,7 @@ iat / exp
 | auth.login.ok | INFO | userId username | 密码/token |
 | auth.login.fail | WARN | username | 密码 |
 | media.deny | INFO | path hasUser signed | 完整 sig 密钥 |
-| progress flush failed | WARN | key message | 用户隐私正文 |
+| progress redis write failed | WARN | message | 用户隐私正文 |
 | wechat redis | WARN/ERROR | 原因 | AppSecret |
 | unhandled | ERROR | rid + stack（仅服务端） | 回传客户端 |
 
@@ -288,8 +287,8 @@ iat / exp
 
 1. `GET /actuator/health` → UP（MySQL+Redis）  
 2. 日志 5xx / `Unhandled error` 计数  
-3. Redis：`SCARD vlp:progress:dirty` 持续上涨说明 flush 跟不上  
-4. MySQL：`study_progress` 行数、慢查询  
+3. Redis：`DBSIZE` / 进度 key 前缀内存；TTL 到期属预期  
+4. MySQL：`study_progress` 仅稀疏完成行，不应被心跳打满  
 5. 磁盘：`UPLOAD_DIR`  
 6. 证书/登录失败突增 → 撞库或配置错误  
 

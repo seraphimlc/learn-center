@@ -22,8 +22,8 @@
 
 同时满足再评估：
 
-1. 单表行数接近 **千万** 或 flush/读延迟持续超 SLA  
-2. 主库写 QPS 在 Redis 缓冲后仍打满，且已做完连接池/批量/索引优化  
+1. 单表行数接近 **千万**（稀疏完成行通常远低于此）  
+2. 其他写路径（注册/审计/访问日志）压满主库且已做完连接池/索引优化  
 3. 有专人维护双写校验与滚动迁移工具  
 
 ## 候选表与键（原则）
@@ -43,20 +43,21 @@
 1. N=16 起，`shard = userId % N`  
 2. 双写期：旧表 + 新分片表并行，校验工具比对  
 3. 读切分片 → 停双写 → 归档旧表  
-4. 多实例 flush：改为 Redis Stream / Kafka 消费者组，避免多节点抢 dirty set  
+4. （已取消进度 flush）多实例只需共享 Redis；进度无 DB 争用  
 
 ## Redis vs MySQL（本系统）
 
 | 用途 | 落点 | 是否恰当 |
 |------|------|----------|
-| 进度高频写 | Redis → 批量 MySQL | ✅ 峰值心跳必需 |
+| 进度高频写（position） | **Redis only**（TTL 7–30d） | ✅ 心跳永不 flush MySQL |
+| 课时完成标记 | 稀疏 MySQL 一次 | ✅ 证书 / 导出 |
 | 首页匿名壳 | Redis Cache TTL 30s | ✅ 读多写少 |
 | 限流计数 | Redis 固定窗口 | ✅ 短命、可丢 |
 | 微信 OAuth state | Redis TTL 10m | ✅ 一次性 CSRF 令牌 |
 | 用户/课程主数据 | MySQL | ✅ 权威源 |
 | AI 缓存 | MySQL `ai_cache` | ✅ 可持久；非热点可不进 Redis |
 
-**不要用 Redis 当进度权威源长期存储**（当前 TTL 7 天 + dirty flush，权威在 MySQL）。
+**播放进度以 Redis 为权威（ephemeral）**：TTL 默认 14 天，过期可丢。MySQL `study_progress` 不再承接心跳；仅稀疏完成行。若未来要「永久续播」，需另开需求做可选落库，而非恢复高 QPS flush。
 
 ## 与 HIGH_CONCURRENCY.md 关系
 

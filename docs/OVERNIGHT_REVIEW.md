@@ -13,11 +13,11 @@
 | 主题 | 决策 | 依据 |
 |------|------|------|
 | 分片 | **不做**（仅设计开关 + DATA_SCALE 原则） | 3 万业务 / 30 万 DID 下 `study_progress` 远未到分片门槛；过早分片增加运维成本 |
-| 进度写 | **保留 Redis dirty-set + 定时 flush** | 峰值 ~3333 QPS 心跳需缓冲；已修并发 flush 丢更新 |
+| 进度写 | **Redis-only 播放进度（无 MySQL flush）** | 用户决策 2026-10-16：心跳永不落库；TTL 过期可丢；完成稀疏写一次 |
 | 公开找回密码 | **默认可开，可环境变量关闭** | 无 OTP 是已知弱项；`PUBLIC_RESET_ENABLED=false` 即可改管理员重置 |
 | 视频 ACL | **学员必须短时签名**；员工 JWT 可预览 | 堵住「登录后凭 videoPath 直下」；非 DRM |
 | 运行时 | **embedded Tomcat jar** | 与现网 Docker/host 部署一致 |
-| Redis | **进度缓冲 / 限流 / 首页缓存 / 微信 state** 均合理 | 详见 TECH_DESIGN；无「用 Redis 当主库」误用 |
+| Redis | **进度权威（ephemeral）/ 限流 / 首页缓存 / 微信 state** | 播放 position 以 Redis 为唯一源；见 TECH_DESIGN §5 |
 
 ## 本轮已落地的安全修复（P0/P1）
 
@@ -40,9 +40,9 @@
 
 ## 日志与监控（运维该看什么）
 
-- `rid=` 请求串联；`auth.login.*`、`media.deny`、进度 flush warn  
+- `rid=` 请求串联；`auth.login.*`、`media.deny`、进度 Redis 写失败 warn  
 - Actuator：`/actuator/health`（已暴露）；**不要**对公网开放全部 actuator  
-- 看板：今日 PV/UV、学习人数；Redis dirty set 长度；Hikari 活跃连接  
+- 看板：今日 PV/UV、学习人数（完成稀疏行）；Redis 进度 key/内存；Hikari 活跃连接  
 - AlertScheduler：连续 N 天未学发通知（已有）  
 
 ## 残余风险（接受或二期）
@@ -69,3 +69,11 @@
 ## 推送状态
 
 见最终报告：`PUSH_NEEDED` + bundle 路径 + commit SHA。
+
+## 附录：2026-10-16 进度 Redis-only（用户决策）
+
+- **播放进度**（position / maxPosition / studied / 续播 / 我的学习%）**只写 Redis**，key `vlp:progress:{uid}:{lessonId}` + 用户索引 `vlp:progress:idx:{uid}`。  
+- **TTL** 默认 **14 天**（`PROGRESS_TTL_DAYS`，建议 7–30）。Redis 重启或 TTL 过期后进度可丢失，**可接受**，从 0 或残留 key 续播。  
+- **已移除** dirty-set + 定时 `flushDirty`；3s 心跳**永不**打 MySQL。  
+- **课时完成**：客户端达到完成阈值时**稀疏写一次** `study_progress.completed`（供证书 / 管理导出）；发证统计改读 Redis 完成标记。  
+- 学情预警 / AI 学情若仍查 `study_progress`，只能看到稀疏完成行，**不是**实时播放位置。

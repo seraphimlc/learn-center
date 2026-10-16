@@ -16,7 +16,7 @@ import java.util.Map;
 /**
  * 学员学习域公开契约（需登录）。
  * 播放必须先 {@code GET /play-url/{lessonId}} 拿短时签名 URL，再请求 /api/media；
- * 进度 {@code POST /progress} 默认走 Redis 缓冲（约 3s 心跳）。
+ * 进度 {@code POST /progress} 仅写 Redis（约 3s 心跳；无 MySQL flush；TTL 可过期）。
  */
 @RestController
 @RequestMapping("/api/learn")
@@ -31,7 +31,7 @@ public class LearnController {
         return ApiResponse.ok(mediaSigningService.mintPlayUrl(AuthContext.current(), lessonId));
     }
 
-    /** 进度上报：心跳 / pause / ended；服务端单调 maxPosition + 完成比例判定。 */
+    /** 进度上报：心跳 / pause / ended；position 仅 Redis；完成时稀疏写 MySQL 一次。 */
     @PostMapping("/progress")
     public ApiResponse<StudyProgress> progress(@Valid @RequestBody ProgressReport req) {
         return ApiResponse.ok(learnService.reportProgress(AuthContext.current(), req));

@@ -124,8 +124,11 @@ vlp:
     # Player heartbeat ~3s (≈20 reports/min per watching user); still report on pause/ended/unmount
     heartbeat-interval-seconds: 3
     progress-max-jump-seconds: 120
-    # progress write path: redis buffer + batch flush (high QPS heartbeats)
+    # Playback position is Redis-only (ephemeral). No MySQL flush for heartbeats.
+    # Losing progress on Redis restart / TTL expiry is ACCEPTABLE.
     progress-async-enabled: ${PROGRESS_ASYNC_ENABLED:true}
+    progress-ttl-days: ${PROGRESS_TTL_DAYS:14}
+    # Deprecated no-ops kept for env compatibility (flush path removed):
     progress-flush-interval-ms: ${PROGRESS_FLUSH_INTERVAL_MS:2000}
     progress-flush-batch-size: ${PROGRESS_FLUSH_BATCH:200}
   media:

@@ -95,7 +95,7 @@ bash scripts/e2e-smoke.sh
 ## 关键能力摘要
 
 - **JWT + RBAC**：ADMIN / CONTENT_ADMIN / DATA_VIEWER；写路径 `AdminRoles` 校验  
-- **进度**：约 3s 心跳 → Redis 缓冲 → 批量 flush MySQL  
+- **进度**：约 3s 心跳 → **仅 Redis**（TTL 默认 14d；完成稀疏写 MySQL；无心跳 flush）  
 - **播放**：`/api/learn/play-url/{lessonId}` 短时签名；学员无签名不可直下视频  
 - **防下载**：基线威慑（非 DRM）  
 - **微信**：开放平台网站应用扫码；未配置则降级  

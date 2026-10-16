@@ -32,3 +32,9 @@ vlp:
 
   auth:
     public-reset-enabled: true
+
+  learn:
+    progress-async-enabled: true
+    progress-ttl-days: 7
+    completion-ratio: 0.5
+
