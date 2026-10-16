@@ -145,6 +145,11 @@ vlp:
   cache:
     home-ttl-seconds: ${CACHE_HOME_TTL:30}
     category-ttl-seconds: ${CACHE_CATEGORY_TTL:60}
+    course-list-ttl-seconds: ${CACHE_COURSE_LIST_TTL:30}
+    course-detail-ttl-seconds: ${CACHE_COURSE_DETAIL_TTL:60}
+    site-config-ttl-seconds: ${CACHE_SITE_CONFIG_TTL:120}
+    news-list-ttl-seconds: ${CACHE_NEWS_LIST_TTL:30}
+    entity-ttl-seconds: ${CACHE_ENTITY_TTL:60}
   shard:
     # design switch for next iteration — see docs/HIGH_CONCURRENCY.md
     enabled: ${SHARD_ENABLED:false}

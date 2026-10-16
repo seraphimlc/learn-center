@@ -2,6 +2,7 @@ package com.vlp.admin.service;
 
 import com.opencsv.CSVReader;
 import com.opencsv.CSVWriter;
+import com.vlp.cache.PublicContentCache;
 import com.vlp.ai.service.AiService;
 import com.vlp.stats.service.VisitService;
 import com.vlp.cert.entity.Certificate;
@@ -53,6 +54,7 @@ public class AdminService {
     private final CertificateService certificateService;
     private final AiService aiService;
     private final VisitService visitService;
+    private final PublicContentCache publicContentCache;
 
     public Map<String, Object> visitStats(int days) {
         return visitService.stats(days);
@@ -143,6 +145,7 @@ public class AdminService {
         news.setContent(HtmlSanitizer.sanitize(news.getContent()));
         News saved = newsRepository.save(news);
         auditService.log(op, "SAVE_NEWS", "NEWS", String.valueOf(saved.getId()), saved.getTitle());
+        evictPublicCaches();
         return saved;
     }
 
@@ -151,6 +154,7 @@ public class AdminService {
         AdminRoles.requireContentWriter(op);
         newsRepository.deleteById(id);
         auditService.log(op, "DELETE_NEWS", "NEWS", String.valueOf(id), null);
+        evictPublicCaches();
     }
 
     // ---- Category ----
@@ -161,6 +165,7 @@ public class AdminService {
         AdminRoles.requireContentWriter(op);
         Category saved = categoryRepository.save(c);
         auditService.log(op, "SAVE_CATEGORY", "CATEGORY", String.valueOf(saved.getId()), saved.getName());
+        evictPublicCaches();
         return saved;
     }
 
@@ -169,6 +174,7 @@ public class AdminService {
         AdminRoles.requireContentWriter(op);
         categoryRepository.deleteById(id);
         auditService.log(op, "DELETE_CATEGORY", "CATEGORY", String.valueOf(id), null);
+        evictPublicCaches();
     }
 
     // ---- Course / Lesson ----
@@ -183,6 +189,7 @@ public class AdminService {
         c.setDescription(HtmlSanitizer.sanitize(c.getDescription()));
         Course saved = courseRepository.save(c);
         auditService.log(op, "SAVE_COURSE", "COURSE", String.valueOf(saved.getId()), saved.getTitle());
+        evictPublicCaches();
         return saved;
     }
 
@@ -192,6 +199,7 @@ public class AdminService {
         lessonRepository.deleteByCourseId(id);
         courseRepository.deleteById(id);
         auditService.log(op, "DELETE_COURSE", "COURSE", String.valueOf(id), null);
+        evictPublicCaches();
     }
 
     public List<Lesson> lessons(Long courseId) {
@@ -204,6 +212,7 @@ public class AdminService {
         Lesson saved = lessonRepository.save(lesson);
         refreshCourseMeta(lesson.getCourseId());
         auditService.log(op, "SAVE_LESSON", "LESSON", String.valueOf(saved.getId()), saved.getTitle());
+        evictPublicCaches();
         return saved;
     }
 
@@ -215,6 +224,7 @@ public class AdminService {
         lessonRepository.delete(l);
         refreshCourseMeta(cid);
         auditService.log(op, "DELETE_LESSON", "LESSON", String.valueOf(id), null);
+        evictPublicCaches();
     }
 
     private void refreshCourseMeta(Long courseId) {
@@ -244,6 +254,7 @@ public class AdminService {
         AdminRoles.requireContentWriter(op);
         Banner saved = bannerRepository.save(b);
         auditService.log(op, "SAVE_BANNER", "BANNER", String.valueOf(saved.getId()), saved.getTitle());
+        evictPublicCaches();
         return saved;
     }
 
@@ -252,15 +263,17 @@ public class AdminService {
         AdminRoles.requireContentWriter(op);
         bannerRepository.deleteById(id);
         auditService.log(op, "DELETE_BANNER", "BANNER", String.valueOf(id), null);
+        evictPublicCaches();
     }
 
-    public List<SiteConfig> configs() { return siteConfigRepository.findAll(); }
+    public List<SiteConfig> configs() { return publicContentCache.siteConfigs(); }
 
     @Transactional
     public SiteConfig saveConfig(UserPrincipal op, SiteConfig c) {
         AdminRoles.requireConfigWriter(op);
         SiteConfig saved = siteConfigRepository.save(c);
         auditService.log(op, "SAVE_CONFIG", "CONFIG", c.getConfigKey(), c.getConfigValue());
+        evictPublicCaches();
         return saved;
     }
 
@@ -338,4 +351,12 @@ public class AdminService {
     }
 
     public List<Certificate> certificates() { return certificateService.all(); }
+
+    private void evictPublicCaches() {
+        try {
+            publicContentCache.evictAllPublic();
+        } catch (Exception ignored) {
+            // TTL remains the safety net
+        }
+    }
 }

@@ -9,19 +9,18 @@ import com.vlp.learn.async.ProgressBufferService;
 import com.vlp.learn.entity.StudyProgress;
 import com.vlp.upload.MediaSigningService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class ContentService {
     private final NewsRepository newsRepository;
-    private final CategoryRepository categoryRepository;
     private final CourseRepository courseRepository;
     private final LessonRepository lessonRepository;
-    private final BannerRepository bannerRepository;
     private final ProgressBufferService progressBufferService;
     private final PublicContentCache publicContentCache;
     private final MediaSigningService mediaSigningService;
@@ -37,23 +36,34 @@ public class ContentService {
         return m;
     }
 
+    /** Batch-load course/lesson rows — avoids N+1 on home continueLearning. */
     private List<Map<String, Object>> enrichProgress(List<StudyProgress> list) {
+        if (list == null || list.isEmpty()) return List.of();
+        Set<Long> courseIds = list.stream().map(StudyProgress::getCourseId).filter(Objects::nonNull).collect(Collectors.toSet());
+        Set<Long> lessonIds = list.stream().map(StudyProgress::getLessonId).filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, Course> courses = courseRepository.findAllById(courseIds).stream()
+                .collect(Collectors.toMap(Course::getId, Function.identity()));
+        Map<Long, Lesson> lessons = lessonRepository.findAllById(lessonIds).stream()
+                .collect(Collectors.toMap(Lesson::getId, Function.identity()));
         List<Map<String, Object>> out = new ArrayList<>();
         for (StudyProgress p : list) {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("progress", p);
-            courseRepository.findById(p.getCourseId()).ifPresent(c -> row.put("course", c));
-            lessonRepository.findById(p.getLessonId()).ifPresent(l -> row.put("lesson", l));
+            Course c = courses.get(p.getCourseId());
+            if (c != null) row.put("course", c);
+            Lesson l = lessons.get(p.getLessonId());
+            if (l != null) row.put("lesson", l);
             out.add(row);
         }
         return out;
     }
 
     public PageResult<News> newsList(int page, int size) {
-        return PageResult.of(newsRepository.findByStatusOrderByPublishedAtDesc("PUBLISHED", PageRequest.of(page - 1, size)));
+        return publicContentCache.newsList(page, size);
     }
 
     public News newsDetail(Long id) {
+        // viewCount++ is a write — do not cache this path
         News n = newsRepository.findById(id).orElseThrow(() -> new BusinessException("新闻不存在"));
         if (!"PUBLISHED".equals(n.getStatus())) throw new BusinessException("新闻未发布");
         n.setViewCount(Optional.ofNullable(n.getViewCount()).orElse(0) + 1);
@@ -65,18 +75,28 @@ public class ContentService {
     }
 
     public PageResult<Course> courseList(Long categoryId, String keyword, int page, int size) {
-        return PageResult.of(courseRepository.searchPublished("PUBLISHED", categoryId, keyword, PageRequest.of(page - 1, size)));
+        return publicContentCache.courseList(categoryId, keyword, page, size);
     }
 
     public Map<String, Object> courseDetail(Long id, Long userId) {
-        Course c = courseRepository.findById(id).orElseThrow(() -> new BusinessException("课程不存在"));
-        if (!"PUBLISHED".equals(c.getStatus())) throw new BusinessException("课程未上架");
-        List<Lesson> lessons = lessonRepository.findByCourseIdOrderBySortOrderAsc(id);
-        // Keep videoPath as opaque storage key only — never permanent public OSS/CDN HTTP.
-        // Playback URL is minted via GET /api/learn/play-url/{lessonId} (JWT + short TTL).
-        for (Lesson l : lessons) {
-            if (l.getVideoPath() != null) {
-                l.setVideoPath(mediaSigningService.opaqueVideoKey(l.getVideoPath()));
+        Map<String, Object> cached = publicContentCache.coursePublicDetail(id);
+        if (cached == null) {
+            Course c = courseRepository.findById(id).orElseThrow(() -> new BusinessException("课程不存在"));
+            if (!"PUBLISHED".equals(c.getStatus())) throw new BusinessException("课程未上架");
+            throw new BusinessException("课程未上架");
+        }
+        Course c = (Course) cached.get("course");
+        @SuppressWarnings("unchecked")
+        List<Lesson> lessonsRaw = (List<Lesson>) cached.get("lessons");
+        // Defensive copy + opaque keys (never mutate a value we might confuse with cache identity)
+        List<Lesson> lessons = new ArrayList<>();
+        if (lessonsRaw != null) {
+            for (Lesson src : lessonsRaw) {
+                Lesson l = copyLesson(src);
+                if (l.getVideoPath() != null) {
+                    l.setVideoPath(mediaSigningService.opaqueVideoKey(l.getVideoPath()));
+                }
+                lessons.add(l);
             }
         }
         Map<String, Object> m = new LinkedHashMap<>();
@@ -104,5 +124,20 @@ public class ContentService {
             if (continueLesson != null) m.put("continueLessonId", continueLesson.getId());
         }
         return m;
+    }
+
+    private static Lesson copyLesson(Lesson src) {
+        return Lesson.builder()
+                .id(src.getId())
+                .courseId(src.getCourseId())
+                .title(src.getTitle())
+                .description(src.getDescription())
+                .videoPath(src.getVideoPath())
+                .durationSeconds(src.getDurationSeconds())
+                .sortOrder(src.getSortOrder())
+                .freePreview(src.getFreePreview())
+                .createdAt(src.getCreatedAt())
+                .updatedAt(src.getUpdatedAt())
+                .build();
     }
 }

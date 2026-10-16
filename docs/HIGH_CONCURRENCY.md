@@ -6,7 +6,7 @@
 
 | 能力 | 实现 |
 |------|------|
-| Redis 缓存 | 首页匿名壳（banners/hot/recommend/news/categories）`homeAnon` TTL≈30s；分类列表 `categories` TTL≈60s |
+| Redis 缓存 | 首页 `homeAnon`≈30s；分类/banner≈60s；`courseList`/`newsList`≈30s；`courseDetail`/lessons/entity≈60s；`siteConfig`≈120s；admin 写 evict（见 CACHE_ANALYSIS.md） |
 | 进度 Redis-only | `ProgressBufferService`：心跳只写 Redis（TTL 默认 14d）；无 dirty flush；完成稀疏写 MySQL |
 | 连接池 | Hikari `maximum-pool-size` 默认 50（可用 `HIKARI_MAX_POOL`）；Lettuce 连接池 max-active 64 |
 | Tomcat 线程 | max 400 / min-spare 50 / accept-count 200 / max-connections 10000 |

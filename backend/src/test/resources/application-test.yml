@@ -15,6 +15,8 @@ spring:
       port: 6379
   autoconfigure:
     exclude: []
+  cache:
+    type: redis
 vlp:
   jwt:
     secret: TestJwtSecretKeyMustBeLongEnoughForHs256AlgorithmXX
@@ -38,3 +40,11 @@ vlp:
     progress-ttl-days: 7
     completion-ratio: 0.5
 
+  cache:
+    home-ttl-seconds: 30
+    category-ttl-seconds: 60
+    course-list-ttl-seconds: 30
+    course-detail-ttl-seconds: 60
+    site-config-ttl-seconds: 120
+    news-list-ttl-seconds: 30
+    entity-ttl-seconds: 60

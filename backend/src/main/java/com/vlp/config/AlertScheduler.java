@@ -1,6 +1,6 @@
 package com.vlp.config;
 
-import com.vlp.content.repo.SiteConfigRepository;
+import com.vlp.cache.PublicContentCache;
 import com.vlp.learn.entity.StudyAlert;
 import com.vlp.learn.entity.StudyProgress;
 import com.vlp.learn.repo.StudyAlertRepository;
@@ -22,15 +22,14 @@ import java.util.Set;
 public class AlertScheduler {
     private final StudyProgressRepository progressRepository;
     private final StudyAlertRepository alertRepository;
-    private final SiteConfigRepository siteConfigRepository;
+    private final PublicContentCache publicContentCache;
     private final NotifyService notifyService;
 
     @Scheduled(cron = "0 0 9 * * *")
     public void scanInactive() {
         int days = 7;
         try {
-            days = Integer.parseInt(siteConfigRepository.findById("learn.alert.inactiveDays")
-                    .map(c -> c.getConfigValue()).orElse("7"));
+            days = Integer.parseInt(publicContentCache.siteConfigValue("learn.alert.inactiveDays").orElse("7"));
         } catch (Exception ignored) {}
         LocalDateTime before = LocalDateTime.now().minusDays(days);
         List<StudyProgress> inactive = progressRepository.findInactiveSince(before);

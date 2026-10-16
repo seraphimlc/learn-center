@@ -19,6 +19,7 @@ Spring Boot 3（**嵌入式 Tomcat** 可执行 jar，非外置 WAR）+ Vue3 用�
 | [docs/FEATURE_GAP.md](docs/FEATURE_GAP.md) | RFP 差距与交付说明 |
 | [docs/CODE_REVIEW.md](docs/CODE_REVIEW.md) | 代码自审与 P2 债 |
 | [docs/HIGH_CONCURRENCY.md](docs/HIGH_CONCURRENCY.md) | 高并发已落地能力与切点 |
+| [docs/CACHE_ANALYSIS.md](docs/CACHE_ANALYSIS.md) | MySQL 读热点与 Redis 缓存设计 |
 
 ## 目录结构
 

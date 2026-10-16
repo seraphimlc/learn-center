@@ -124,7 +124,7 @@ news / banners / site_config / audit_logs / visit_log / ai_cache / study_alerts
 |----------|----------|----------|
 | `vlp:progress:{uid}:{lessonId}` | String JSON，**TTL 默认 14d**（`PROGRESS_TTL_DAYS`，建议 7–30） | **权威播放位置**；写失败不落 MySQL（返回 503） |
 | `vlp:progress:idx:{uid}` | Set(lessonId)，同 TTL | 「我的学习 / 继续学习」索引，无 DB 扫描 |
-| `vlp:cache:homeAnon` 等 | Cache TTL ~30–60s | 未命中打库 |
+| `vlp:cache:*`（homeAnon/courseList/courseDetail/entity/siteConfig…） | TTL 30–120s；admin 写 evict | 详见 CACHE_ANALYSIS.md |
 | `rl:{bucket}:{ip}:{minute}` | 计数 2min | fail-open |
 | `vlp:wechat:oauth:state:{state}` | 10m | start/回调均依赖；宕机拒绝 OAuth |
 

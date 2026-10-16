@@ -1,6 +1,7 @@
 package com.vlp.learn.async;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.vlp.cache.PublicContentCache;
 import com.vlp.cert.service.CertificateService;
 import com.vlp.common.BusinessException;
 import com.vlp.content.entity.Course;
@@ -45,6 +46,7 @@ public class ProgressBufferService {
     private final LessonRepository lessonRepository;
     private final CourseRepository courseRepository;
     private final CertificateService certificateService;
+    private final PublicContentCache publicContentCache;
 
     /** Kept for config compatibility; when false, accept() still uses Redis-only (no MySQL heartbeats). */
     @Value("${vlp.learn.progress-async-enabled:true}")
@@ -130,10 +132,10 @@ public class ProgressBufferService {
     }
 
     public StudyProgress accept(UserPrincipal me, ProgressReport req) {
-        Lesson lesson = lessonRepository.findById(req.getLessonId())
-                .orElseThrow(() -> new BusinessException("课时不存在"));
-        Course course = courseRepository.findById(lesson.getCourseId())
-                .orElseThrow(() -> new BusinessException("课程不存在"));
+        Lesson lesson = publicContentCache.lessonById(req.getLessonId());
+        if (lesson == null) throw new BusinessException("课时不存在");
+        Course course = publicContentCache.courseById(lesson.getCourseId());
+        if (course == null) throw new BusinessException("课程不存在");
 
         String key = progressKey(me.getId(), lesson.getId());
         // Redis only — no MySQL seed for live position (miss ⇒ fresh 0)
@@ -252,6 +254,11 @@ public class ProgressBufferService {
                 c.setLessonCount(list.size());
                 courseRepository.save(c);
             });
+            try {
+                publicContentCache.evictAfterLessonMetaChange(lesson.getId(), lesson.getCourseId());
+            } catch (Exception e) {
+                log.debug("cache evict after duration sync: {}", e.getMessage());
+            }
             return reported;
         }
         return duration;
@@ -260,7 +267,7 @@ public class ProgressBufferService {
     /** Cert check uses Redis completion flags for the course (not waiting for a flush). */
     private void tryMaybeCert(Long userId, Course course) {
         try {
-            List<Lesson> lessons = lessonRepository.findByCourseIdOrderBySortOrderAsc(course.getId());
+            List<Lesson> lessons = publicContentCache.lessonsByCourse(course.getId());
             if (lessons.isEmpty()) return;
             Map<Long, StudyProgress> redisMap = loadCourseProgress(userId, course.getId(), lessons);
             long done = redisMap.values().stream().filter(x -> Boolean.TRUE.equals(x.getCompleted())).count();

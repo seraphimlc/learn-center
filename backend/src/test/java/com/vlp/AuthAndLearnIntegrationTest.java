@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -37,12 +38,18 @@ class AuthAndLearnIntegrationTest {
     @Autowired LessonRepository lessonRepository;
     @Autowired StudyProgressRepository progressRepository;
     @Autowired PasswordEncoder passwordEncoder;
+    @Autowired StringRedisTemplate redis;
 
     Long lessonId;
     Long courseId;
 
     @BeforeEach
     void setUp() {
+        // H2 ids restart each JVM but Redis persists — clear ephemeral progress to avoid uid/lesson collisions
+        try {
+            var keys = redis.keys("vlp:progress:*");
+            if (keys != null && !keys.isEmpty()) redis.delete(keys);
+        } catch (Exception ignored) {}
         // ensure a published course/lesson for progress tests
         if (courseRepository.count() == 0) {
             Course c = courseRepository.save(Course.builder()

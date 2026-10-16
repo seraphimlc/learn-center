@@ -1,10 +1,9 @@
 package com.vlp.upload;
 
+import com.vlp.cache.PublicContentCache;
 import com.vlp.common.BusinessException;
 import com.vlp.content.entity.Course;
 import com.vlp.content.entity.Lesson;
-import com.vlp.content.repo.CourseRepository;
-import com.vlp.content.repo.LessonRepository;
 import com.vlp.security.UserPrincipal;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -33,8 +32,7 @@ import java.util.Map;
 @Service
 @RequiredArgsConstructor
 public class MediaSigningService {
-    private final LessonRepository lessonRepository;
-    private final CourseRepository courseRepository;
+    private final PublicContentCache publicContentCache;
 
     @Value("${vlp.jwt.secret}")
     private String signingSecret;
@@ -74,10 +72,10 @@ public class MediaSigningService {
      */
     public Map<String, Object> mintPlayUrl(UserPrincipal user, Long lessonId) {
         if (user == null) throw new BusinessException(401, "未登录");
-        Lesson lesson = lessonRepository.findById(lessonId)
-                .orElseThrow(() -> new BusinessException("课时不存在"));
-        Course course = courseRepository.findById(lesson.getCourseId())
-                .orElseThrow(() -> new BusinessException("课程不存在"));
+        Lesson lesson = publicContentCache.lessonById(lessonId);
+        if (lesson == null) throw new BusinessException("课时不存在");
+        Course course = publicContentCache.courseById(lesson.getCourseId());
+        if (course == null) throw new BusinessException("课程不存在");
         if (!"PUBLISHED".equals(course.getStatus())) {
             throw new BusinessException(403, "课程未上架");
         }

@@ -1,6 +1,7 @@
 package com.vlp.learn.service;
 
 import com.vlp.common.BusinessException;
+import com.vlp.cache.PublicContentCache;
 import com.vlp.content.entity.Course;
 import com.vlp.content.entity.Lesson;
 import com.vlp.content.repo.CourseRepository;
@@ -16,7 +17,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.Comparator;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * 学习域核心服务。播放进度（position）仅写 Redis（ProgressBufferService）；
@@ -31,6 +33,7 @@ public class LearnService {
     private final LessonRepository lessonRepository;
     private final CourseRepository courseRepository;
     private final ProgressBufferService progressBufferService;
+    private final PublicContentCache publicContentCache;
 
     public StudyProgress reportProgress(UserPrincipal me, ProgressReport req) {
         // Always Redis-only for heartbeats (no MySQL position path).
@@ -43,12 +46,18 @@ public class LearnService {
         for (StudyProgress p : all) {
             latestByCourse.putIfAbsent(p.getCourseId(), p);
         }
+        if (latestByCourse.isEmpty()) return List.of();
+
+        Map<Long, Course> courses = courseRepository.findAllById(latestByCourse.keySet()).stream()
+                .collect(Collectors.toMap(Course::getId, Function.identity()));
+
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map.Entry<Long, StudyProgress> e : latestByCourse.entrySet()) {
             Long courseId = e.getKey();
-            Course c = courseRepository.findById(courseId).orElse(null);
+            Course c = courses.get(courseId);
             if (c == null) continue;
-            List<Lesson> lessons = lessonRepository.findByCourseIdOrderBySortOrderAsc(c.getId());
+            // Cached lesson list — avoids repeated MySQL on my-learning / course switches
+            List<Lesson> lessons = publicContentCache.lessonsByCourse(c.getId());
             Map<Long, StudyProgress> merged = progressBufferService.loadCourseProgress(userId, c.getId(), lessons);
             StudyProgress latest = merged.values().stream()
                     .max(Comparator.comparing(x -> Optional.ofNullable(x.getUpdatedAt()).orElse(LocalDateTime.MIN)))
@@ -79,7 +88,8 @@ public class LearnService {
                 StudyProgress cp = merged.get(continueLesson.getId());
                 row.put("continueCompleted", cp != null && Boolean.TRUE.equals(cp.getCompleted()));
             } else if (latest != null) {
-                lessonRepository.findById(latest.getLessonId()).ifPresent(l -> row.put("lesson", l));
+                Lesson fallback = publicContentCache.lessonById(latest.getLessonId());
+                if (fallback != null) row.put("lesson", fallback);
                 row.put("continueLessonId", latest.getLessonId());
             }
             out.add(row);
