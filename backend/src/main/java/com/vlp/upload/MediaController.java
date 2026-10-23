@@ -14,18 +14,20 @@ import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.IOException;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 
 /**
  * 媒体流式输出（支持 Range）。
  * <p>
  * 视频 ACL（一期基线，非 DRM）：
  * <ul>
- *   <li>封面图 /api/media/images/** 可匿名</li>
+ *   <li>封面图 images/**（含 learn/images/**）可匿名</li>
  *   <li>视频必须：短时签名 {@code expires+sig}，或管理端员工 JWT 预览</li>
  *   <li>普通学员仅持 JWT、无签名时不可凭 opaque videoPath 直下整文件</li>
- *   <li>软 Referer 校验；前端 nodownload / 禁右键仅为威慑</li>
+ *   <li>OSS 开启且本地无文件时：302 到短时 OSS 签名 GET（私有桶）</li>
  * </ul>
  */
 @Slf4j
@@ -35,31 +37,45 @@ import java.nio.file.Path;
 public class MediaController {
     private final UploadService uploadService;
     private final MediaSigningService mediaSigningService;
+    private final OssStorageService ossStorageService;
     private static final long CHUNK = 1024 * 1024;
 
     @Value("${vlp.cors.origins}")
     private String allowedOrigins;
 
     @GetMapping("/**")
-    public ResponseEntity<ResourceRegion> media(jakarta.servlet.http.HttpServletRequest request,
-                                                @RequestHeader HttpHeaders headers,
-                                                @RequestParam(required = false) String expires,
-                                                @RequestParam(required = false) String sig) throws IOException {
+    public ResponseEntity<?> media(jakarta.servlet.http.HttpServletRequest request,
+                                   @RequestHeader HttpHeaders headers,
+                                   @RequestParam(required = false) String expires,
+                                   @RequestParam(required = false) String sig) throws IOException {
         String uri = request.getRequestURI();
-        boolean isImage = uri.contains("/api/media/images/");
         String prefix = "/api/media/";
         int idx = uri.indexOf(prefix);
         String rel = idx >= 0 ? uri.substring(idx + prefix.length()) : "";
         if (rel.contains("..")) throw new BusinessException("非法路径");
+        boolean isImage = isImageKey(rel);
 
         if (!isImage) {
             assertVideoAccess(request, rel, expires, sig);
         }
 
         Path file = uploadService.getRoot().resolve(rel).normalize();
-        if (!file.startsWith(uploadService.getRoot()) || !Files.isRegularFile(file)) {
-            return ResponseEntity.notFound().build();
+        if (file.startsWith(uploadService.getRoot()) && Files.isRegularFile(file)) {
+            return streamLocal(file, headers, isImage);
         }
+
+        // OSS-backed opaque keys (e.g. learn/videos/…, learn/images/…)
+        if (ossStorageService.isReady()) {
+            long expiresAt = Instant.now().getEpochSecond() + 300;
+            String signed = mediaSigningService.signOssGetUrl(rel, expiresAt);
+            return ResponseEntity.status(HttpStatus.FOUND).location(URI.create(signed)).build();
+        }
+
+        return ResponseEntity.notFound().build();
+    }
+
+    private ResponseEntity<ResourceRegion> streamLocal(Path file, HttpHeaders headers, boolean isImage)
+            throws IOException {
         Resource resource = new FileSystemResource(file);
         long length = resource.contentLength();
         String contentType = Files.probeContentType(file);
@@ -84,6 +100,11 @@ public class MediaController {
                 .header(HttpHeaders.CONTENT_DISPOSITION, "inline")
                 .header(HttpHeaders.CACHE_CONTROL, isImage ? "public, max-age=3600" : "private, no-store")
                 .body(region);
+    }
+
+    static boolean isImageKey(String rel) {
+        if (rel == null) return false;
+        return rel.startsWith("images/") || rel.contains("/images/");
     }
 
     /**

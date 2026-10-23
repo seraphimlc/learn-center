@@ -111,6 +111,8 @@ vlp:
     bucket: ${OSS_BUCKET:}
     access-key: ${OSS_ACCESS_KEY:}
     secret-key: ${OSS_SECRET_KEY:}
+    # Object key prefix on shared buckets (videos → learn/videos/…, images → learn/images/…)
+    prefix: ${OSS_PREFIX:learn/}
   cdn:
     enabled: ${CDN_ENABLED:false}
     domain: ${CDN_DOMAIN:}

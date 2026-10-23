@@ -1,7 +1,7 @@
 # 知行学堂 · 视频学习平台（一期）
 
 Spring Boot 3（**嵌入式 Tomcat** 可执行 jar，非外置 WAR）+ Vue3 用户端 + Vue3 管理后台 + Docker MySQL/Redis。  
-视频一期使用本地 `uploads/` 存储；OSS/CDN 配置项已在 `application.yml` 预留。
+媒体：本地 `uploads/` 或私有阿里云 OSS（前缀 `learn/` + 短时签名 GET）；CDN 默认关闭。详见 `docs/OSS.md`。
 
 线上：https://learn.visitworld.me/ · 管理端 `/admin/`  
 规模口径：业务约 **3 万**注册 / DID 设计 **30 万** / 峰值约 **1 万**在线（**当前不分片**）。

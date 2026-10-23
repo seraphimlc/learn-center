@@ -2,6 +2,7 @@ package com.vlp.upload;
 
 import com.vlp.common.BusinessException;
 import jakarta.annotation.PostConstruct;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -9,18 +10,22 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.nio.file.*;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 
 /**
- * 本地上传。文件名强制 UUID，杜绝路径穿越与原名覆盖；
- * 扩展名白名单 + 体积上限；禁止 svg（可内嵌脚本，图片公网可读）。
+ * 上传：OSS 启用且凭证齐全时 PUT 到私有桶（object key 带 {@code learn/} 前缀）；
+ * 否则落本地 {@code uploads/}。DB 存 opaque key（如 {@code learn/videos/{uuid}.mp4} 或 {@code videos/{uuid}.mp4}）。
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class UploadService {
+    private final OssStorageService ossStorageService;
+
     @Value("${vlp.upload.dir}")
     private String uploadDir;
 
@@ -40,7 +45,7 @@ public class UploadService {
         root = Paths.get(uploadDir).toAbsolutePath().normalize();
         Files.createDirectories(root.resolve("videos"));
         Files.createDirectories(root.resolve("images"));
-        log.info("Upload root: {}", root);
+        log.info("Upload root: {} ossReady={}", root, ossStorageService.isReady());
     }
 
     public Path getRoot() { return root; }
@@ -56,7 +61,6 @@ public class UploadService {
     private String store(MultipartFile file, String sub, Set<String> allowed, long maxBytes, boolean video) {
         if (file == null || file.isEmpty()) throw new BusinessException("文件不能为空");
         String original = file.getOriginalFilename() == null ? "file" : file.getOriginalFilename();
-        // 拒绝路径片段与双扩展名伪装
         if (original.contains("..") || original.contains("/") || original.contains("\\")) {
             throw new BusinessException("非法文件名");
         }
@@ -73,7 +77,6 @@ public class UploadService {
         if (file.getSize() > maxBytes) {
             throw new BusinessException("文件过大");
         }
-        // 轻量魔数抽检（防改后缀）
         try (InputStream in = file.getInputStream()) {
             byte[] head = in.readNBytes(12);
             if (!looksPlausible(head, ext, video)) {
@@ -84,7 +87,28 @@ public class UploadService {
         } catch (IOException e) {
             throw new BusinessException("文件读取失败");
         }
+
         String name = UUID.randomUUID().toString().replace("-", "") + "." + ext;
+        String contentType = guessContentType(ext, video);
+
+        if (ossStorageService.isReady()) {
+            String key = ossStorageService.prefix() + sub + "/" + name;
+            try {
+                ossStorageService.putObject(key, () -> {
+                    try {
+                        return file.getInputStream();
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+                }, file.getSize(), contentType);
+            } catch (BusinessException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new BusinessException("文件保存失败");
+            }
+            return key;
+        }
+
         Path dest = root.resolve(sub).resolve(name).normalize();
         if (!dest.startsWith(root.resolve(sub))) {
             throw new BusinessException("非法路径");
@@ -97,18 +121,28 @@ public class UploadService {
         return sub + "/" + name;
     }
 
+    private static String guessContentType(String ext, boolean video) {
+        return switch (ext) {
+            case "mp4", "m4v" -> "video/mp4";
+            case "webm" -> "video/webm";
+            case "mov" -> "video/quicktime";
+            case "jpg", "jpeg" -> "image/jpeg";
+            case "png" -> "image/png";
+            case "gif" -> "image/gif";
+            case "webp" -> "image/webp";
+            default -> video ? "application/octet-stream" : "application/octet-stream";
+        };
+    }
+
     private static boolean looksPlausible(byte[] head, String ext, boolean video) {
         if (head == null || head.length < 4) return false;
         if (video) {
-            // mp4/mov often ftyp at offset 4; webm EBML 1A45DFA3
             if ("webm".equals(ext)) {
                 return head[0] == 0x1A && head[1] == (byte) 0x45;
             }
-            // allow mp4/mov/m4v if has ftyp or looks like ISO BMFF
             String ascii = new String(head, 0, Math.min(head.length, 12));
             return ascii.contains("ftyp") || head[0] == 0x00;
         }
-        // images
         if ("jpg".equals(ext) || "jpeg".equals(ext)) {
             return (head[0] & 0xFF) == 0xFF && (head[1] & 0xFF) == 0xD8;
         }

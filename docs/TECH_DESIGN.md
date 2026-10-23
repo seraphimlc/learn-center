@@ -1,6 +1,6 @@
 # 知行学堂 · 技术设计（TECH_DESIGN）
 
-版本：2026-10-15 · 与现网代码对齐
+版本：2026-10-23 · 与现网代码对齐
 
 ---
 
@@ -15,7 +15,7 @@
 | 管理端 | Vue 3 + Vite + Element Plus（`:5174`，base `/admin/`） |
 | DB | MySQL 8（JPA `ddl-auto: update`） |
 | 缓存/缓冲 | Redis 7（Lettuce） |
-| 媒体 | 一期本地 `uploads/`；OSS/CDN 配置预留 |
+| 媒体 | 本地 `uploads/` 或私有 OSS（`learn/` 前缀 + 签名 GET）；CDN 默认关 |
 | AI | OpenAI 兼容 HTTP（`LLM_*` 环境变量） |
 
 ### 1.2 逻辑架构
@@ -190,7 +190,7 @@ AlertScheduler：每日扫描长期未学并发通知。
 - syncLessonDuration 重复  
 - AdminService/Controller 偏胖  
 - 缺 RBAC / play-url 自动化测试补强  
-- 读写分离 / 真 OSS 凭证待商务确认  
+- 读写分离待下一迭代；OSS 私有桶已接线（见 [OSS.md](./OSS.md)）  
 - 学情预警 / AI 学情仍读 `study_progress`（仅稀疏完成行，非实时 position）  
 
 ---
@@ -266,7 +266,7 @@ iat / exp
 | vlp.rate-limit.reset-per-minute | RL_RESET_PER_MIN | 10 |
 | vlp.rate-limit.progress-per-minute | RL_PROGRESS_PER_MIN | 180 |
 | vlp.cors.origins | VLP_CORS_ORIGINS | 本地+learn 域 |
-| vlp.oss.* / vlp.cdn.* | OSS_* CDN_* | 默认关 |
+| vlp.oss.* / vlp.cdn.* | OSS_* CDN_* / OSS_PREFIX | OSS/CDN 默认关；前缀默认 learn/ |
 | vlp.shard.enabled | SHARD_ENABLED | false |
 | spring.datasource-readonly.enabled | DB_READONLY_ENABLED | false（未接线） |
 
